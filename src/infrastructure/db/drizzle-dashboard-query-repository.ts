@@ -6,6 +6,7 @@ import type {
   MonthlyCashFlowSummary,
   TransactionListItem,
 } from "../../app/ports/dashboard-query-repository";
+import type { EconomicType } from "../../core/finance/constants";
 import type { AppDatabase } from "./client";
 import { accounts, importBatches, sources, transactions } from "./schema";
 
@@ -26,7 +27,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .orderBy(accounts.name);
   }
 
-  async listTransactions(options?: { limit?: number; offset?: number }): Promise<TransactionListItem[]> {
+  async listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType }): Promise<TransactionListItem[]> {
     const query = this.db
       .select({
         id: transactions.id,
@@ -42,10 +43,11 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         status: transactions.status,
       })
       .from(transactions)
-      .innerJoin(accounts, eq(transactions.accountId, accounts.id))
-      .orderBy(desc(transactions.transactionDate), desc(transactions.id));
-    if (!options?.limit) return query;
-    return query.limit(options.limit).offset(options.offset ?? 0);
+      .innerJoin(accounts, eq(transactions.accountId, accounts.id));
+    const filteredQuery = options?.economicType ? query.where(eq(transactions.economicType, options.economicType)) : query;
+    const orderedQuery = filteredQuery.orderBy(desc(transactions.transactionDate), desc(transactions.id));
+    if (!options?.limit) return orderedQuery;
+    return orderedQuery.limit(options.limit).offset(options.offset ?? 0);
   }
 
   async getLatestImport(): Promise<LatestImport> {

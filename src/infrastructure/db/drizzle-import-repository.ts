@@ -31,8 +31,8 @@ export class DrizzleImportRepository implements ImportRepository {
   }
 
   async importFile(input: ProcessedImportFile): Promise<ImportBatchSummary> {
-    if (input.importFile.source.kind !== "bank") {
-      throw new Error("Only bank imports are supported in this version.");
+    if (input.importFile.source.kind !== "bank" && input.importFile.source.kind !== "credit_card") {
+      throw new Error("Only bank and credit-card imports are supported in this version.");
     }
 
     return this.db.transaction(async tx => {
@@ -104,7 +104,7 @@ export class DrizzleImportRepository implements ImportRepository {
           continue;
         }
 
-        const account = await this.findOrCreateAccount(tx, source.id, record);
+        const account = await this.findOrCreateAccount(tx, source.id, record, input.importFile.source.kind);
         const [rawRecord] = await tx
           .insert(rawRecords)
           .values({
@@ -252,7 +252,12 @@ export class DrizzleImportRepository implements ImportRepository {
     return source;
   }
 
-  private async findOrCreateAccount(db: AppDatabase, sourceId: number, record: ResolvedImportRecord) {
+  private async findOrCreateAccount(
+    db: AppDatabase,
+    sourceId: number,
+    record: ResolvedImportRecord,
+    sourceKind: ProcessedImportFile["importFile"]["source"]["kind"],
+  ) {
     const identity = record.account.externalId
       ? and(eq(accounts.sourceId, sourceId), eq(accounts.externalId, record.account.externalId))
       : and(
@@ -270,7 +275,7 @@ export class DrizzleImportRepository implements ImportRepository {
         sourceId,
         externalId: record.account.externalId,
         name: record.account.name,
-        kind: "bank_account",
+        kind: sourceKind === "credit_card" ? "credit_card" : "bank_account",
         currencyCode: record.account.currencyCode,
         createdAt: timestamp,
         updatedAt: timestamp,

@@ -58,6 +58,7 @@ type MonthlyCashFlowSummary = {
 const economicTypeOptions: EconomicType[] = ["expense", "income", "transfer", "unclassified"];
 const matchModeOptions: ClassificationMatchMode[] = ["exact", "starts_with", "contains"];
 const transactionPageSize = 100;
+const classificationReviewPageSize = 25;
 
 function formatMoney(amountMinor: number, currencyCode: string) {
   return new Intl.NumberFormat(undefined, {
@@ -85,6 +86,8 @@ export function App() {
   const [ruleDrafts, setRuleDrafts] = useState<Record<string, { description: string; matchMode: ClassificationMatchMode }>>({});
   const [hasMoreTransactions, setHasMoreTransactions] = useState(false);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
+  const [transactionFilter, setTransactionFilter] = useState<"all" | EconomicType>("all");
+  const [visibleReviewGroupCount, setVisibleReviewGroupCount] = useState(classificationReviewPageSize);
   const remainingClassificationCount = reviewGroups.reduce((total, group) => total + group.transactionCount, 0);
 
   const loadClassifications = async () => {
@@ -95,6 +98,7 @@ export function App() {
     if (!reviewResponse.ok || !rulesResponse.ok) throw new Error("Unable to load classification data.");
     setReviewGroups(await reviewResponse.json());
     setRules(await rulesResponse.json());
+    setVisibleReviewGroupCount(classificationReviewPageSize);
   };
 
   const loadMonthlySummary = async (month: string) => {
@@ -104,10 +108,12 @@ export function App() {
     setError(null);
   };
 
-  const loadTransactions = async (offset = 0, append = false) => {
+  const loadTransactions = async (offset = 0, append = false, filter = transactionFilter) => {
     setLoadingTransactions(true);
     try {
-      const response = await fetch(`/api/transactions?limit=${transactionPageSize}&offset=${offset}`);
+      const query = new URLSearchParams({ limit: String(transactionPageSize), offset: String(offset) });
+      if (filter !== "all") query.set("economicType", filter);
+      const response = await fetch(`/api/transactions?${query}`);
       if (!response.ok) throw new Error("Unable to load transactions.");
       const page: Transaction[] = await response.json();
       setTransactions(current => append ? [...current, ...page] : page);
@@ -142,6 +148,13 @@ export function App() {
       setError(summaryError instanceof Error ? summaryError.message : "Unable to load monthly cash flow.");
     });
   }, [selectedMonth]);
+
+  useEffect(() => {
+    if (page !== "transactions") return;
+    void loadTransactions().catch(transactionError => {
+      setError(transactionError instanceof Error ? transactionError.message : "Unable to load transactions.");
+    });
+  }, [page, transactionFilter]);
 
   const saveRule = async (input: { sourceId: number; description: string; direction: EconomicDirection; matchMode: ClassificationMatchMode; economicType: EconomicType }, key: string) => {
     setSavingKey(key);
@@ -270,7 +283,7 @@ export function App() {
           ) : null}
 
           <div className="mt-5 space-y-3">
-            {reviewGroups.map(group => {
+            {reviewGroups.slice(0, visibleReviewGroupCount).map(group => {
               const key = `${group.sourceId}:${group.direction}:${group.description}`;
               const draft = ruleDrafts[key] ?? { description: group.description, matchMode: "exact" as const };
               return (
@@ -318,6 +331,11 @@ export function App() {
               );
             })}
           </div>
+          {reviewGroups.length > visibleReviewGroupCount ? (
+            <button className="mt-4 rounded-lg border border-neutral-700 px-4 py-2 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-900" onClick={() => setVisibleReviewGroupCount(current => current + classificationReviewPageSize)}>
+              Load more classification groups
+            </button>
+          ) : null}
         </section>
 
         <section className={page === "classification" ? "mt-8" : "hidden"}>
@@ -363,7 +381,13 @@ export function App() {
               <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Transactions</p>
               <h2 className="mt-2 text-xl font-semibold">Newest first</h2>
             </div>
-            {!loading ? <p className="text-sm text-neutral-500">{transactions.length}{hasMoreTransactions ? "+" : ""} loaded</p> : null}
+            <div className="flex items-center gap-3">
+              <select className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilter} onChange={event => setTransactionFilter(event.target.value as "all" | EconomicType)}>
+                <option value="all">All economic types</option>
+                {economicTypeOptions.map(economicType => <option key={economicType} value={economicType}>{titleCase(economicType)}</option>)}
+              </select>
+              {!loading ? <p className="text-sm text-neutral-500">{transactions.length}{hasMoreTransactions ? "+" : ""} loaded</p> : null}
+            </div>
           </div>
 
           {!loading && transactions.length === 0 ? (

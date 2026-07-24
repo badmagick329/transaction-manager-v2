@@ -43,7 +43,8 @@ export type MonthlyCashFlowSummary = {
 
 export type DashboardQueryRepository = {
   listAccounts(): Promise<AccountListItem[]>;
-  listTransactions(options?: { limit?: number; offset?: number }): Promise<TransactionListItem[]>;
+  listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType }): Promise<TransactionListItem[]>;
   getLatestImport(): Promise<LatestImport>;
   getMonthlyCashFlowSummary(month: string): Promise<MonthlyCashFlowSummary>;
 };
+import type { EconomicType } from "../../core/finance/constants";

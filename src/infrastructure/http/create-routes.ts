@@ -47,13 +47,19 @@ export function createHttpRoutes({ queries, classifications, indexHtml }: Create
         const url = new URL(request.url);
         const limitText = url.searchParams.get("limit");
         const offsetText = url.searchParams.get("offset");
-        if (limitText === null && offsetText === null) return Response.json(await queries.listTransactions());
+        const economicType = url.searchParams.get("economicType");
+        if (economicType !== null && !economicTypes.includes(economicType as (typeof economicTypes)[number])) {
+          return Response.json({ error: "economicType is invalid." }, { status: 400 });
+        }
+        if (limitText === null && offsetText === null) {
+          return Response.json(await queries.listTransactions({ economicType: economicType as (typeof economicTypes)[number] | undefined }));
+        }
         const limit = Number(limitText);
         const offset = Number(offsetText ?? "0");
         if (!Number.isInteger(limit) || limit < 1 || limit > 250 || !Number.isInteger(offset) || offset < 0) {
           return Response.json({ error: "limit must be 1–250 and offset must be a non-negative integer." }, { status: 400 });
         }
-        return Response.json(await queries.listTransactions({ limit, offset }));
+        return Response.json(await queries.listTransactions({ limit, offset, economicType: economicType as (typeof economicTypes)[number] | undefined }));
       },
     },
 

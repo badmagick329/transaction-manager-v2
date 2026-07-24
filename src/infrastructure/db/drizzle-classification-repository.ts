@@ -52,7 +52,7 @@ export class DrizzleClassificationRepository implements ClassificationRepository
       const direction = economicDirectionForAmount(transaction.amountMinor);
       const normalizedDescription = normalizeDescription(transaction.description);
       const key = this.ruleKey(transaction.sourceId, normalizedDescription, direction);
-      if (ruleRows.some(rule => this.matchesRule(rule, transaction.description, direction))) continue;
+      if (ruleRows.some(rule => rule.sourceId === transaction.sourceId && this.matchesRule(rule, transaction.description, direction))) continue;
 
       const existing = groups.get(key);
       const sample = {

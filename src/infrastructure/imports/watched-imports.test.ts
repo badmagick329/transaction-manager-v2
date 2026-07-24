@@ -82,6 +82,22 @@ describe("watched bank imports", () => {
     expect(await db.select().from(accounts)).toHaveLength(1);
   });
 
+  test("imports credit-card records into a credit-card account", async () => {
+    const { db, repository } = await createTestContext();
+    const capitalOneImport = importFile([record({ externalId: "card-1", description: "Card purchase" })]);
+    capitalOneImport.source = {
+      ...capitalOneImport.source,
+      slug: "capital-one",
+      name: "Capital One",
+      kind: "credit_card" as const,
+      account: { externalId: null, name: "Capital One MasterCard ending 9724", currencyCode: "GBP" },
+    };
+
+    await importStandardFile(repository, { fileName: "capital-one.json", fileHash: "capital-one-file", importFile: capitalOneImport });
+    expect((await db.select().from(accounts))[0]).toMatchObject({ name: "Capital One MasterCard ending 9724", kind: "credit_card" });
+    expect((await db.select().from(transactions))[0]).toMatchObject({ description: "Card purchase", amountMinor: -450 });
+  });
+
   test("skips identical files and only stores globally new overlapping records", async () => {
     const { db, repository } = await createTestContext();
     const first = importFile([record({ externalId: "bank-1" }), record({ externalId: "bank-2", description: "Groceries", rawPayload: { row: "2" } })]);
@@ -116,10 +132,12 @@ describe("watched bank imports", () => {
     const latest = await queries.getLatestImport();
     const listedTransactions = await queries.listTransactions();
     const secondPage = await queries.listTransactions({ limit: 1, offset: 1 });
+    const unclassifiedTransactions = await queries.listTransactions({ economicType: "unclassified" });
 
     expect(latest).toMatchObject({ fileName: "statement.json", status: "processed", recordCount: 2 });
     expect(listedTransactions.map(transaction => transaction.description)).toEqual(["Newer", "Coffee shop"]);
     expect(secondPage.map(transaction => transaction.description)).toEqual(["Coffee shop"]);
+    expect(unclassifiedTransactions).toHaveLength(2);
   });
 
   test("summarizes monthly cash flow without counting transfers in net cash flow", async () => {
@@ -330,6 +348,7 @@ describe("watched bank imports", () => {
     const storedTransactions = await db.select().from(transactions);
     expect(storedTransactions.map(transaction => transaction.economicType)).toEqual(["expense", "expense", "unclassified"]);
     expect((await db.select().from(economicClassificationAudits)).map(audit => audit.reason)).toEqual(["rule_applied", "rule_applied_on_import"]);
+    expect((await classifications.listReviewGroups()).some(group => group.sourceName === "HSBC" && group.description === "Coffee Shop")).toBe(true);
   });
 
   test("uses starts-with rules for variable references and prioritizes exact rules", async () => {

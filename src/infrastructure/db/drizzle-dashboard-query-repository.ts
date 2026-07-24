@@ -66,11 +66,12 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
     };
   }
 
-  async getMonthlyCashFlowSummary(month: string): Promise<MonthlyCashFlowSummary> {
+  async getMonthlyCashFlowSummary(month: string): Promise<MonthlyCashFlowSummary[]> {
     const [year, monthNumber] = month.split("-").map(Number);
     const nextMonth = new Date(Date.UTC(year, monthNumber, 1)).toISOString().slice(0, 7);
-    const [summary] = await this.db
+    const summaries = await this.db
       .select({
+        currencyCode: transactions.currencyCode,
         incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
         expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
         transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
@@ -78,14 +79,17 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         unclassifiedTransactionCount: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'unclassified' then 1 else 0 end), 0)`,
       })
       .from(transactions)
-      .where(and(gte(transactions.transactionDate, `${month}-01`), lt(transactions.transactionDate, `${nextMonth}-01`)));
-    return {
+      .where(and(gte(transactions.transactionDate, `${month}-01`), lt(transactions.transactionDate, `${nextMonth}-01`)))
+      .groupBy(transactions.currencyCode)
+      .orderBy(transactions.currencyCode);
+    return summaries.map(summary => ({
+      currencyCode: summary.currencyCode,
       incomeMinor: summary.incomeMinor,
       expenseMinor: summary.expenseMinor,
       netCashFlowMinor: summary.incomeMinor + summary.expenseMinor,
       transferInflowMinor: summary.transferInflowMinor,
       transferOutflowMinor: summary.transferOutflowMinor,
       unclassifiedTransactionCount: summary.unclassifiedTransactionCount,
-    };
+    }));
   }
 }

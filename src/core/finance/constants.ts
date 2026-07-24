@@ -1,4 +1,4 @@
-export const sourceKinds = ["bank", "credit_card", "paypal", "trading212", "manual"] as const;
+export const sourceKinds = ["bank", "credit_card", "paypal", "trading212", "robinhood", "manual"] as const;
 export type SourceKind = (typeof sourceKinds)[number];
 
 export const accountKinds = [
@@ -18,7 +18,7 @@ export type EconomicType = (typeof economicTypes)[number];
 export const economicDirections = ["inflow", "outflow"] as const;
 export type EconomicDirection = (typeof economicDirections)[number];
 
-export const classificationMatchModes = ["exact", "starts_with", "contains"] as const;
+export const classificationMatchModes = ["exact", "starts_with", "contains", "all"] as const;
 export type ClassificationMatchMode = (typeof classificationMatchModes)[number];
 
 export const transactionTypes = [

@@ -11,6 +11,8 @@ export function economicDirectionForAmount(amountMinor: number): EconomicDirecti
 export function descriptionMatchesRule(description: string, matchValue: string, matchMode: ClassificationMatchMode) {
   const normalizedDescription = normalizeDescription(description);
   switch (matchMode) {
+    case "all":
+      return true;
     case "exact":
       return normalizedDescription === matchValue;
     case "starts_with":
@@ -21,5 +23,5 @@ export function descriptionMatchesRule(description: string, matchValue: string, 
 }
 
 export function ruleMatchPriority(matchMode: ClassificationMatchMode) {
-  return matchMode === "exact" ? 3 : matchMode === "starts_with" ? 2 : 1;
+  return matchMode === "exact" ? 4 : matchMode === "starts_with" ? 3 : matchMode === "contains" ? 2 : 1;
 }

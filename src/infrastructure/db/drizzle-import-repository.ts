@@ -31,8 +31,8 @@ export class DrizzleImportRepository implements ImportRepository {
   }
 
   async importFile(input: ProcessedImportFile): Promise<ImportBatchSummary> {
-    if (input.importFile.source.kind !== "bank" && input.importFile.source.kind !== "credit_card") {
-      throw new Error("Only bank and credit-card imports are supported in this version.");
+    if (input.importFile.source.kind !== "bank" && input.importFile.source.kind !== "credit_card" && input.importFile.source.kind !== "robinhood") {
+      throw new Error("Only bank, credit-card, and Robinhood imports are supported in this version.");
     }
 
     return this.db.transaction(async tx => {
@@ -275,7 +275,7 @@ export class DrizzleImportRepository implements ImportRepository {
         sourceId,
         externalId: record.account.externalId,
         name: record.account.name,
-        kind: sourceKind === "credit_card" ? "credit_card" : "bank_account",
+        kind: sourceKind === "credit_card" ? "credit_card" : sourceKind === "robinhood" ? "investment_portfolio" : "bank_account",
         currencyCode: record.account.currencyCode,
         createdAt: timestamp,
         updatedAt: timestamp,

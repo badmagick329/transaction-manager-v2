@@ -10,6 +10,7 @@ export function createDb(databasePath = defaultDatabasePath) {
   mkdirSync(dirname(databasePath), { recursive: true });
 
   const sqlite = new Database(databasePath, { create: true });
+  sqlite.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 10000;");
   return drizzle(sqlite, { schema });
 }
 

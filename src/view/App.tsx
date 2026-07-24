@@ -24,7 +24,7 @@ type Transaction = {
 
 type EconomicType = "expense" | "income" | "transfer" | "unclassified";
 type EconomicDirection = "inflow" | "outflow";
-type ClassificationMatchMode = "exact" | "starts_with" | "contains";
+type ClassificationMatchMode = "exact" | "starts_with" | "contains" | "all";
 
 type ClassificationReviewGroup = {
   sourceId: number;
@@ -56,7 +56,7 @@ type MonthlyCashFlowSummary = {
 };
 
 const economicTypeOptions: EconomicType[] = ["expense", "income", "transfer", "unclassified"];
-const matchModeOptions: ClassificationMatchMode[] = ["exact", "starts_with", "contains"];
+const matchModeOptions: ClassificationMatchMode[] = ["exact", "starts_with", "contains", "all"];
 const transactionPageSize = 100;
 const classificationReviewPageSize = 25;
 
@@ -77,7 +77,7 @@ export function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [page, setPage] = useState<"dashboard" | "classification" | "transactions">("dashboard");
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [monthlySummary, setMonthlySummary] = useState<MonthlyCashFlowSummary | null>(null);
+  const [monthlySummary, setMonthlySummary] = useState<MonthlyCashFlowSummary[] | null>(null);
   const [reviewGroups, setReviewGroups] = useState<ClassificationReviewGroup[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -256,15 +256,20 @@ export function App() {
                 <input className="ml-3 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100" type="month" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value)} />
               </label>
             </div>
-            {monthlySummary ? (
-              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Income</p><p className="mt-2 text-2xl font-semibold text-emerald-300">{formatMoney(monthlySummary.incomeMinor, "GBP")}</p></div>
-                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Expenses</p><p className="mt-2 text-2xl font-semibold text-red-300">{formatMoney(Math.abs(monthlySummary.expenseMinor), "GBP")}</p></div>
-                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Net cash flow</p><p className={`mt-2 text-2xl font-semibold ${monthlySummary.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(monthlySummary.netCashFlowMinor, "GBP")}</p></div>
-                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Unclassified</p><p className="mt-2 text-2xl font-semibold">{monthlySummary.unclassifiedTransactionCount}</p><button className="mt-2 text-sm text-neutral-400 hover:text-neutral-200" onClick={() => setPage("classification")}>Review classifications</button></div>
+            {monthlySummary === null ? <p className="mt-5 text-sm text-neutral-400">Loading monthly cash flow…</p> : null}
+            {monthlySummary?.length === 0 ? <p className="mt-5 text-sm text-neutral-400">No transactions for this month.</p> : null}
+            {monthlySummary?.map(summary => (
+              <div key={summary.currencyCode} className="mt-5">
+                <p className="text-sm font-medium text-neutral-300">{summary.currencyCode}</p>
+                <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Income</p><p className="mt-2 text-2xl font-semibold text-emerald-300">{formatMoney(summary.incomeMinor, summary.currencyCode)}</p></div>
+                  <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Expenses</p><p className="mt-2 text-2xl font-semibold text-red-300">{formatMoney(Math.abs(summary.expenseMinor), summary.currencyCode)}</p></div>
+                  <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Net cash flow</p><p className={`mt-2 text-2xl font-semibold ${summary.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(summary.netCashFlowMinor, summary.currencyCode)}</p></div>
+                  <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Unclassified</p><p className="mt-2 text-2xl font-semibold">{summary.unclassifiedTransactionCount}</p><button className="mt-2 text-sm text-neutral-400 hover:text-neutral-200" onClick={() => setPage("classification")}>Review classifications</button></div>
+                </div>
+                <p className="mt-4 text-sm text-neutral-500">Transfers: {formatMoney(summary.transferInflowMinor, summary.currencyCode)} in · {formatMoney(Math.abs(summary.transferOutflowMinor), summary.currencyCode)} out</p>
               </div>
-            ) : <p className="mt-5 text-sm text-neutral-400">Loading monthly cash flow…</p>}
-            {monthlySummary ? <p className="mt-4 text-sm text-neutral-500">Transfers: {formatMoney(monthlySummary.transferInflowMinor, "GBP")} in · {formatMoney(Math.abs(monthlySummary.transferOutflowMinor), "GBP")} out</p> : null}
+            ))}
           </section>
         ) : null}
 

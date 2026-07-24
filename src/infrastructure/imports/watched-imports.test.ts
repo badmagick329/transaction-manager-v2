@@ -98,6 +98,22 @@ describe("watched bank imports", () => {
     expect((await db.select().from(transactions))[0]).toMatchObject({ description: "Card purchase", amountMinor: -450 });
   });
 
+  test("imports Robinhood records into an investment portfolio account", async () => {
+    const { db, repository } = await createTestContext();
+    const robinhoodImport = importFile([record({ externalId: "robinhood-1", description: "Instant bank deposit", amountMinor: 64546, currencyCode: "USD", transactionType: "funding" })]);
+    robinhoodImport.source = {
+      ...robinhoodImport.source,
+      slug: "robinhood",
+      name: "Robinhood",
+      kind: "robinhood" as const,
+      account: { externalId: "211580585969", name: "Robinhood Individual Account", currencyCode: "USD" },
+    };
+
+    await importStandardFile(repository, { fileName: "2024-07-31_Robinhood.json", fileHash: "robinhood-file", importFile: robinhoodImport });
+    expect((await db.select().from(accounts))[0]).toMatchObject({ name: "Robinhood Individual Account", kind: "investment_portfolio", currencyCode: "USD" });
+    expect((await db.select().from(transactions))[0]).toMatchObject({ description: "Instant bank deposit", amountMinor: 64546, currencyCode: "USD", transactionType: "funding" });
+  });
+
   test("skips identical files and only stores globally new overlapping records", async () => {
     const { db, repository } = await createTestContext();
     const first = importFile([record({ externalId: "bank-1" }), record({ externalId: "bank-2", description: "Groceries", rawPayload: { row: "2" } })]);
@@ -140,7 +156,7 @@ describe("watched bank imports", () => {
     expect(unclassifiedTransactions).toHaveLength(2);
   });
 
-  test("summarizes monthly cash flow without counting transfers in net cash flow", async () => {
+  test("summarizes monthly cash flow separately by currency without counting transfers in net cash flow", async () => {
     const { db, repository } = await createTestContext();
     await importStandardFile(repository, {
       fileName: "summary.json",
@@ -158,14 +174,38 @@ describe("watched bank imports", () => {
     await classifications.saveRule({ sourceId: source.id, description: "Salary", matchMode: "exact", direction: "inflow", economicType: "income" });
     await classifications.saveRule({ sourceId: source.id, description: "Investment", matchMode: "exact", direction: "outflow", economicType: "transfer" });
 
-    expect(await createDashboardQueries(new DrizzleDashboardQueryRepository(db)).getMonthlyCashFlowSummary("2026-01")).toEqual({
-      incomeMinor: 1000,
-      expenseMinor: -500,
-      netCashFlowMinor: 500,
-      transferInflowMinor: 0,
-      transferOutflowMinor: -200,
-      unclassifiedTransactionCount: 1,
-    });
+    const robinhoodImport = importFile([record({ externalId: "usd-income", description: "Dividend", amountMinor: 125, currencyCode: "USD", transactionDate: "2026-01-14", rawPayload: { row: "5" } })]);
+    robinhoodImport.source = {
+      ...robinhoodImport.source,
+      slug: "robinhood",
+      name: "Robinhood",
+      kind: "robinhood" as const,
+      account: { externalId: "211580585969", name: "Robinhood Individual Account", currencyCode: "USD" },
+    };
+    await importStandardFile(repository, { fileName: "robinhood-summary.json", fileHash: "robinhood-summary", importFile: robinhoodImport });
+    const robinhood = (await db.select().from(sources)).find(item => item.slug === "robinhood")!;
+    await classifications.saveRule({ sourceId: robinhood.id, description: "Dividend", matchMode: "exact", direction: "inflow", economicType: "income" });
+
+    expect(await createDashboardQueries(new DrizzleDashboardQueryRepository(db)).getMonthlyCashFlowSummary("2026-01")).toEqual([
+      {
+        currencyCode: "GBP",
+        incomeMinor: 1000,
+        expenseMinor: -500,
+        netCashFlowMinor: 500,
+        transferInflowMinor: 0,
+        transferOutflowMinor: -200,
+        unclassifiedTransactionCount: 1,
+      },
+      {
+        currencyCode: "USD",
+        incomeMinor: 125,
+        expenseMinor: 0,
+        netCashFlowMinor: 125,
+        transferInflowMinor: 0,
+        transferOutflowMinor: 0,
+        unclassifiedTransactionCount: 0,
+      },
+    ]);
   });
 
   test("moves invalid files to failed without raw or transaction rows", async () => {
@@ -376,5 +416,28 @@ describe("watched bank imports", () => {
       ]),
     });
     expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["transfer", "expense", "expense", "transfer"]);
+  });
+
+  test("uses an all rule for every transaction from one source and direction", async () => {
+    const { db, repository } = await createTestContext();
+    const robinhoodImport = importFile([
+      record({ externalId: "robinhood-in", description: "Interest Payment", amountMinor: 11, currencyCode: "USD" }),
+      record({ externalId: "robinhood-out", description: "Bank withdrawal", amountMinor: -100, currencyCode: "USD", rawPayload: { row: "2" } }),
+    ]);
+    robinhoodImport.source = {
+      ...robinhoodImport.source,
+      slug: "robinhood",
+      name: "Robinhood",
+      kind: "robinhood" as const,
+      account: { externalId: "211580585969", name: "Robinhood Individual Account", currencyCode: "USD" },
+    };
+    await importStandardFile(repository, { fileName: "robinhood.json", fileHash: "robinhood-all-rule", importFile: robinhoodImport });
+    const robinhood = (await db.select().from(sources))[0]!;
+    const classifications = new DrizzleClassificationRepository(db);
+
+    await classifications.saveRule({ sourceId: robinhood.id, description: "*", matchMode: "all", direction: "inflow", economicType: "transfer" });
+    await classifications.saveRule({ sourceId: robinhood.id, description: "*", matchMode: "all", direction: "outflow", economicType: "transfer" });
+
+    expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["transfer", "transfer"]);
   });
 });

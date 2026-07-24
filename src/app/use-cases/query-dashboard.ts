@@ -3,7 +3,7 @@ import type { DashboardQueryRepository } from "../ports/dashboard-query-reposito
 export function createDashboardQueries(repository: DashboardQueryRepository) {
   return {
     listAccounts: () => repository.listAccounts(),
-    listTransactions: () => repository.listTransactions(),
+    listTransactions: (options?: { limit?: number; offset?: number }) => repository.listTransactions(options),
     getLatestImport: () => repository.getLatestImport(),
   };
 }

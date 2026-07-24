@@ -34,6 +34,6 @@ export type LatestImport = {
 
 export type DashboardQueryRepository = {
   listAccounts(): Promise<AccountListItem[]>;
-  listTransactions(): Promise<TransactionListItem[]>;
+  listTransactions(options?: { limit?: number; offset?: number }): Promise<TransactionListItem[]>;
   getLatestImport(): Promise<LatestImport>;
 };

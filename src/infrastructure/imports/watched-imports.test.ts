@@ -7,11 +7,12 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { createDb } from "../db/client";
 import { DrizzleImportRepository } from "../db/drizzle-import-repository";
 import { DrizzleDashboardQueryRepository } from "../db/drizzle-dashboard-query-repository";
+import { DrizzleClassificationRepository } from "../db/drizzle-classification-repository";
 import { correctHsbcDirectDebitTransfers } from "../db/correct-hsbc-direct-debits";
 import { importStandardFile } from "../../app/use-cases/import-standard-file";
 import { createDashboardQueries } from "../../app/use-cases/query-dashboard";
 import { standardImportFileSchema } from "../../app/contracts/standard-import";
-import { accounts, importAttempts, importBatches, rawRecords, transactionTypeCorrections, transactions } from "../db/schema";
+import { accounts, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactionTypeCorrections, transactions } from "../db/schema";
 import { startWatchedImports } from "./watched-imports";
 
 const migrationsFolder = join(process.cwd(), "drizzle");
@@ -114,9 +115,11 @@ describe("watched bank imports", () => {
 
     const latest = await queries.getLatestImport();
     const listedTransactions = await queries.listTransactions();
+    const secondPage = await queries.listTransactions({ limit: 1, offset: 1 });
 
     expect(latest).toMatchObject({ fileName: "statement.json", status: "processed", recordCount: 2 });
     expect(listedTransactions.map(transaction => transaction.description)).toEqual(["Newer", "Coffee shop"]);
+    expect(secondPage.map(transaction => transaction.description)).toEqual(["Coffee shop"]);
   });
 
   test("moves invalid files to failed without raw or transaction rows", async () => {
@@ -223,5 +226,108 @@ describe("watched bank imports", () => {
     await watcher.close();
 
     expect(await readFile(join(root, "imports", "processed", "recovery.json"), "utf8")).toBe(json);
+  });
+
+  test("creates a local rule, reapplies it to history, and audits changes", async () => {
+    const { db, repository } = await createTestContext();
+    await importStandardFile(repository, {
+      fileName: "first.json",
+      fileHash: "classification-history",
+      importFile: importFile([
+        record({ externalId: "coffee-1", description: "Coffee   Shop", rawPayload: { row: "1" } }),
+        record({ externalId: "coffee-2", description: " coffee shop ", rawPayload: { row: "2" } }),
+        record({ externalId: "coffee-income", description: "Coffee Shop", amountMinor: 500, rawPayload: { row: "3" } }),
+      ]),
+    });
+    const source = (await db.select().from(sources))[0]!;
+    const classifications = new DrizzleClassificationRepository(db);
+
+    expect((await classifications.listReviewGroups()).find(group => group.description === "Coffee   Shop")?.transactionCount).toBe(2);
+    const created = await classifications.saveRule({
+      sourceId: source.id,
+      description: "COFFEE SHOP",
+      matchMode: "exact",
+      direction: "outflow",
+      economicType: "expense",
+    });
+    expect(created.affectedTransactionCount).toBe(2);
+    expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["expense", "expense", "unclassified"]);
+    expect(await db.select().from(economicClassificationAudits)).toHaveLength(2);
+
+    const unchanged = await classifications.saveRule({
+      sourceId: source.id,
+      description: "coffee shop",
+      matchMode: "exact",
+      direction: "outflow",
+      economicType: "expense",
+    });
+    expect(unchanged.affectedTransactionCount).toBe(0);
+    expect(await db.select().from(economicClassificationAudits)).toHaveLength(2);
+
+    await classifications.saveRule({
+      sourceId: source.id,
+      description: "coffee shop",
+      matchMode: "exact",
+      direction: "outflow",
+      economicType: "transfer",
+    });
+    expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["transfer", "transfer", "unclassified"]);
+
+    await classifications.deleteRule(created.rule.id);
+    expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["unclassified", "unclassified", "unclassified"]);
+    expect(await db.select().from(economicClassificationAudits)).toHaveLength(6);
+  });
+
+  test("applies a provider rule to future matching imports without crossing providers", async () => {
+    const { db, repository } = await createTestContext();
+    await importStandardFile(repository, {
+      fileName: "first.json",
+      fileHash: "classification-future-1",
+      importFile: importFile([record({ externalId: "coffee-1", description: "Coffee Shop" })]),
+    });
+    const lloyds = (await db.select().from(sources))[0]!;
+    const classifications = new DrizzleClassificationRepository(db);
+    await classifications.saveRule({ sourceId: lloyds.id, description: "coffee shop", matchMode: "exact", direction: "outflow", economicType: "expense" });
+
+    await importStandardFile(repository, {
+      fileName: "second.json",
+      fileHash: "classification-future-2",
+      importFile: importFile([record({ externalId: "coffee-2", description: "  COFFEE   SHOP  ", rawPayload: { row: "2" } })]),
+    });
+    const hsbcFile = importFile([record({ externalId: "coffee-3", description: "Coffee Shop", rawPayload: { row: "3" } })]);
+    hsbcFile.source.slug = "hsbc";
+    hsbcFile.source.name = "HSBC";
+    await importStandardFile(repository, { fileName: "third.json", fileHash: "classification-future-3", importFile: hsbcFile });
+
+    const storedTransactions = await db.select().from(transactions);
+    expect(storedTransactions.map(transaction => transaction.economicType)).toEqual(["expense", "expense", "unclassified"]);
+    expect((await db.select().from(economicClassificationAudits)).map(audit => audit.reason)).toEqual(["rule_applied", "rule_applied_on_import"]);
+  });
+
+  test("uses starts-with rules for variable references and prioritizes exact rules", async () => {
+    const { db, repository } = await createTestContext();
+    await importStandardFile(repository, {
+      fileName: "first.json",
+      fileHash: "classification-patterns-1",
+      importFile: importFile([
+        record({ externalId: "trading-1", description: "Trading 212 212TG0K4A212T", rawPayload: { row: "1" } }),
+        record({ externalId: "trading-2", description: "Trading 212 212TH93A5212T", rawPayload: { row: "2" } }),
+      ]),
+    });
+    const source = (await db.select().from(sources))[0]!;
+    const classifications = new DrizzleClassificationRepository(db);
+    await classifications.saveRule({ sourceId: source.id, description: "Trading 212", matchMode: "starts_with", direction: "outflow", economicType: "transfer" });
+    expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["transfer", "transfer"]);
+
+    await classifications.saveRule({ sourceId: source.id, description: "Trading 212 212TH93A5212T", matchMode: "exact", direction: "outflow", economicType: "expense" });
+    await importStandardFile(repository, {
+      fileName: "second.json",
+      fileHash: "classification-patterns-2",
+      importFile: importFile([
+        record({ externalId: "trading-3", description: "Trading 212 212TH93A5212T", rawPayload: { row: "3" } }),
+        record({ externalId: "trading-4", description: "Trading 212 212TJ4P7V212T", rawPayload: { row: "4" } }),
+      ]),
+    });
+    expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["transfer", "expense", "expense", "transfer"]);
   });
 });

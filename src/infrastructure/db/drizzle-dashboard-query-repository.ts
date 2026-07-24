@@ -25,8 +25,8 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .orderBy(accounts.name);
   }
 
-  async listTransactions(): Promise<TransactionListItem[]> {
-    return this.db
+  async listTransactions(options?: { limit?: number; offset?: number }): Promise<TransactionListItem[]> {
+    const query = this.db
       .select({
         id: transactions.id,
         accountId: accounts.id,
@@ -43,6 +43,8 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .from(transactions)
       .innerJoin(accounts, eq(transactions.accountId, accounts.id))
       .orderBy(desc(transactions.transactionDate), desc(transactions.id));
+    if (!options?.limit) return query;
+    return query.limit(options.limit).offset(options.offset ?? 0);
   }
 
   async getLatestImport(): Promise<LatestImport> {

@@ -1,6 +1,8 @@
 import { index, integer, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 import {
   accountKinds,
+  classificationMatchModes,
+  economicDirections,
   economicTypes,
   importAttemptStatuses,
   importBatchStatuses,
@@ -46,6 +48,7 @@ export const accounts = sqliteTable(
     sourceIdx: index("accounts_source_idx").on(table.sourceId),
     parentIdx: index("accounts_parent_idx").on(table.parentAccountId),
     sourceExternalUnique: uniqueIndex("accounts_source_external_unique").on(table.sourceId, table.externalId),
+    sourceNameCurrencyIdx: index("accounts_source_name_currency_idx").on(table.sourceId, table.name, table.currencyCode),
   }),
 );
 
@@ -136,6 +139,7 @@ export const transactions = sqliteTable(
   },
   table => ({
     accountDateIdx: index("transactions_account_date_idx").on(table.accountId, table.transactionDate),
+    dateIdx: index("transactions_date_idx").on(table.transactionDate, table.id),
     rawRecordIdx: index("transactions_raw_record_idx").on(table.rawRecordId),
     sourceExternalUnique: uniqueIndex("transactions_source_external_unique").on(table.sourceId, table.externalId),
   }),
@@ -155,6 +159,49 @@ export const transactionTypeCorrections = sqliteTable(
   },
   table => ({
     transactionUnique: uniqueIndex("transaction_type_corrections_transaction_unique").on(table.transactionId),
+  }),
+);
+
+export const classificationRules = sqliteTable(
+  "classification_rules",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    sourceId: integer("source_id")
+      .notNull()
+      .references(() => sources.id),
+    normalizedDescription: text("normalized_description").notNull(),
+    matchMode: text("match_mode", { enum: classificationMatchModes }).notNull().default("exact"),
+    direction: text("direction", { enum: economicDirections }).notNull(),
+    economicType: text("economic_type", { enum: economicTypes }).notNull(),
+    createdAt: text("created_at").notNull().$defaultFn(isoNow),
+    updatedAt: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  table => ({
+    sourceDirectionDescriptionUnique: uniqueIndex("classification_rules_source_direction_description_unique").on(
+      table.sourceId,
+      table.direction,
+      table.matchMode,
+      table.normalizedDescription,
+    ),
+  }),
+);
+
+export const economicClassificationAudits = sqliteTable(
+  "economic_classification_audits",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    transactionId: integer("transaction_id")
+      .notNull()
+      .references(() => transactions.id),
+    classificationRuleId: integer("classification_rule_id"),
+    previousEconomicType: text("previous_economic_type", { enum: economicTypes }).notNull(),
+    newEconomicType: text("new_economic_type", { enum: economicTypes }).notNull(),
+    reason: text("reason").notNull(),
+    createdAt: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  table => ({
+    transactionIdx: index("economic_classification_audits_transaction_idx").on(table.transactionId),
+    ruleIdx: index("economic_classification_audits_rule_idx").on(table.classificationRuleId),
   }),
 );
 
@@ -189,6 +236,8 @@ export const schema = {
   importBatches,
   importAttempts,
   transactionTypeCorrections,
+  classificationRules,
+  economicClassificationAudits,
   rawRecords,
   transactions,
   transactionLinks,

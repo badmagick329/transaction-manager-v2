@@ -1,8 +1,9 @@
 import { and, desc, eq } from "drizzle-orm";
+import { descriptionMatchesRule, economicDirectionForAmount, ruleMatchPriority } from "../../app/classification";
 import type { ImportBatchSummary, ImportRepository, ProcessedImportFile, ResolvedImportRecord } from "../../app/ports/import-repository";
 import { createSourceRecordHash, resolveImportRecordAccounts } from "../../app/use-cases/import-standard-file";
 import type { AppDatabase } from "./client";
-import { accounts, importAttempts, importBatches, rawRecords, sources, transactions } from "./schema";
+import { accounts, classificationRules, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactions } from "./schema";
 
 const now = () => new Date().toISOString();
 
@@ -88,6 +89,7 @@ export class DrizzleImportRepository implements ImportRepository {
         .returning();
 
       const source = await this.findOrCreateSource(tx, input.importFile.source);
+      const sourceRules = await tx.select().from(classificationRules).where(eq(classificationRules.sourceId, source.id));
       const records = resolveImportRecordAccounts(input.importFile);
       let duplicateRecordCount = 0;
 
@@ -115,14 +117,25 @@ export class DrizzleImportRepository implements ImportRepository {
           })
           .returning();
 
-        await tx.insert(transactions).values({
+        const direction = economicDirectionForAmount(record.amountMinor);
+        const classificationRule = sourceRules
+          .filter(rule => rule.direction === direction)
+          .filter(rule => descriptionMatchesRule(record.description, rule.normalizedDescription, rule.matchMode))
+          .sort(
+            (left, right) =>
+              ruleMatchPriority(right.matchMode) - ruleMatchPriority(left.matchMode) ||
+              right.normalizedDescription.length - left.normalizedDescription.length ||
+              right.id - left.id,
+          )[0];
+        const economicType = classificationRule?.economicType ?? "unclassified";
+        const [transaction] = await tx.insert(transactions).values({
           sourceId: source.id,
           accountId: account.id,
           rawRecordId: rawRecord.id,
           externalId: record.externalId ?? null,
           sourceTransactionHash: sourceRecordHash,
           transactionType: record.transactionType ?? "unclassified",
-          economicType: "unclassified",
+          economicType,
           status: record.status,
           amountMinor: record.amountMinor,
           currencyCode: record.currencyCode,
@@ -132,7 +145,17 @@ export class DrizzleImportRepository implements ImportRepository {
           rawDescription: record.rawDescription ?? null,
           createdAt: timestamp,
           updatedAt: timestamp,
-        });
+        }).returning();
+        if (classificationRule) {
+          await tx.insert(economicClassificationAudits).values({
+            transactionId: transaction.id,
+            classificationRuleId: classificationRule.id,
+            previousEconomicType: "unclassified",
+            newEconomicType: economicType,
+            reason: "rule_applied_on_import",
+            createdAt: timestamp,
+          });
+        }
       }
 
       const completedAt = now();

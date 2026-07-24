@@ -15,6 +15,12 @@ export type AccountKind = (typeof accountKinds)[number];
 export const economicTypes = ["expense", "income", "transfer", "unclassified"] as const;
 export type EconomicType = (typeof economicTypes)[number];
 
+export const economicDirections = ["inflow", "outflow"] as const;
+export type EconomicDirection = (typeof economicDirections)[number];
+
+export const classificationMatchModes = ["exact", "starts_with", "contains"] as const;
+export type ClassificationMatchMode = (typeof classificationMatchModes)[number];
+
 export const transactionTypes = [
   "unclassified",
   "purchase",

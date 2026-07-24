@@ -1,8 +1,9 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import type {
   AccountListItem,
   DashboardQueryRepository,
   LatestImport,
+  MonthlyCashFlowSummary,
   TransactionListItem,
 } from "../../app/ports/dashboard-query-repository";
 import type { AppDatabase } from "./client";
@@ -60,6 +61,29 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       errorMessage: row.errorMessage,
       importedAt: row.importedAt,
       createdAt: row.createdAt,
+    };
+  }
+
+  async getMonthlyCashFlowSummary(month: string): Promise<MonthlyCashFlowSummary> {
+    const [year, monthNumber] = month.split("-").map(Number);
+    const nextMonth = new Date(Date.UTC(year, monthNumber, 1)).toISOString().slice(0, 7);
+    const [summary] = await this.db
+      .select({
+        incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
+        expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
+        transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
+        transferOutflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} < 0 then ${transactions.amountMinor} else 0 end), 0)`,
+        unclassifiedTransactionCount: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'unclassified' then 1 else 0 end), 0)`,
+      })
+      .from(transactions)
+      .where(and(gte(transactions.transactionDate, `${month}-01`), lt(transactions.transactionDate, `${nextMonth}-01`)));
+    return {
+      incomeMinor: summary.incomeMinor,
+      expenseMinor: summary.expenseMinor,
+      netCashFlowMinor: summary.incomeMinor + summary.expenseMinor,
+      transferInflowMinor: summary.transferInflowMinor,
+      transferOutflowMinor: summary.transferOutflowMinor,
+      unclassifiedTransactionCount: summary.unclassifiedTransactionCount,
     };
   }
 }

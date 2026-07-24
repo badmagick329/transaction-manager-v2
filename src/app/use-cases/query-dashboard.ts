@@ -5,5 +5,6 @@ export function createDashboardQueries(repository: DashboardQueryRepository) {
     listAccounts: () => repository.listAccounts(),
     listTransactions: (options?: { limit?: number; offset?: number }) => repository.listTransactions(options),
     getLatestImport: () => repository.getLatestImport(),
+    getMonthlyCashFlowSummary: (month: string) => repository.getMonthlyCashFlowSummary(month),
   };
 }

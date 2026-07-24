@@ -122,6 +122,34 @@ describe("watched bank imports", () => {
     expect(secondPage.map(transaction => transaction.description)).toEqual(["Coffee shop"]);
   });
 
+  test("summarizes monthly cash flow without counting transfers in net cash flow", async () => {
+    const { db, repository } = await createTestContext();
+    await importStandardFile(repository, {
+      fileName: "summary.json",
+      fileHash: "monthly-summary",
+      importFile: importFile([
+        record({ externalId: "expense", description: "Groceries", amountMinor: -500, transactionDate: "2026-01-10", rawPayload: { row: "1" } }),
+        record({ externalId: "income", description: "Salary", amountMinor: 1000, transactionDate: "2026-01-11", rawPayload: { row: "2" } }),
+        record({ externalId: "transfer", description: "Investment", amountMinor: -200, transactionDate: "2026-01-12", rawPayload: { row: "3" } }),
+        record({ externalId: "unknown", description: "Unknown", amountMinor: -100, transactionDate: "2026-01-13", rawPayload: { row: "4" } }),
+      ]),
+    });
+    const source = (await db.select().from(sources))[0]!;
+    const classifications = new DrizzleClassificationRepository(db);
+    await classifications.saveRule({ sourceId: source.id, description: "Groceries", matchMode: "exact", direction: "outflow", economicType: "expense" });
+    await classifications.saveRule({ sourceId: source.id, description: "Salary", matchMode: "exact", direction: "inflow", economicType: "income" });
+    await classifications.saveRule({ sourceId: source.id, description: "Investment", matchMode: "exact", direction: "outflow", economicType: "transfer" });
+
+    expect(await createDashboardQueries(new DrizzleDashboardQueryRepository(db)).getMonthlyCashFlowSummary("2026-01")).toEqual({
+      incomeMinor: 1000,
+      expenseMinor: -500,
+      netCashFlowMinor: 500,
+      transferInflowMinor: 0,
+      transferOutflowMinor: -200,
+      unclassifiedTransactionCount: 1,
+    });
+  });
+
   test("moves invalid files to failed without raw or transaction rows", async () => {
     const { root, db, repository } = await createTestContext();
     const incoming = join(root, "imports", "incoming");

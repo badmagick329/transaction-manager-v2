@@ -63,6 +63,16 @@ export function createHttpRoutes({ queries, classifications, indexHtml }: Create
       },
     },
 
+    "/api/dashboard/monthly": {
+      async GET(request: Request) {
+        const month = new URL(request.url).searchParams.get("month");
+        if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+          return Response.json({ error: "month must use YYYY-MM." }, { status: 400 });
+        }
+        return Response.json(await queries.getMonthlyCashFlowSummary(month));
+      },
+    },
+
     "/api/classification/review": {
       async GET() {
         return Response.json(await classifications.listReviewGroups());

@@ -46,6 +46,15 @@ type ClassificationRule = {
   economicType: EconomicType;
 };
 
+type MonthlyCashFlowSummary = {
+  incomeMinor: number;
+  expenseMinor: number;
+  netCashFlowMinor: number;
+  transferInflowMinor: number;
+  transferOutflowMinor: number;
+  unclassifiedTransactionCount: number;
+};
+
 const economicTypeOptions: EconomicType[] = ["expense", "income", "transfer", "unclassified"];
 const matchModeOptions: ClassificationMatchMode[] = ["exact", "starts_with", "contains"];
 const transactionPageSize = 100;
@@ -65,6 +74,9 @@ function titleCase(value: string) {
 export function App() {
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [page, setPage] = useState<"dashboard" | "classification" | "transactions">("dashboard");
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [monthlySummary, setMonthlySummary] = useState<MonthlyCashFlowSummary | null>(null);
   const [reviewGroups, setReviewGroups] = useState<ClassificationReviewGroup[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -83,6 +95,13 @@ export function App() {
     if (!reviewResponse.ok || !rulesResponse.ok) throw new Error("Unable to load classification data.");
     setReviewGroups(await reviewResponse.json());
     setRules(await rulesResponse.json());
+  };
+
+  const loadMonthlySummary = async (month: string) => {
+    const response = await fetch(`/api/dashboard/monthly?month=${month}`);
+    if (!response.ok) throw new Error("Unable to load monthly cash flow.");
+    setMonthlySummary(await response.json());
+    setError(null);
   };
 
   const loadTransactions = async (offset = 0, append = false) => {
@@ -117,6 +136,12 @@ export function App() {
 
     void load();
   }, []);
+
+  useEffect(() => {
+    void loadMonthlySummary(selectedMonth).catch(summaryError => {
+      setError(summaryError instanceof Error ? summaryError.message : "Unable to load monthly cash flow.");
+    });
+  }, [selectedMonth]);
 
   const saveRule = async (input: { sourceId: number; description: string; direction: EconomicDirection; matchMode: ClassificationMatchMode; economicType: EconomicType }, key: string) => {
     setSavingKey(key);
@@ -172,6 +197,17 @@ export function App() {
           <p className="mt-2 text-sm text-neutral-400">
             Put completed parser JSON files into <code className="rounded bg-neutral-800 px-1.5 py-0.5">imports/incoming</code>.
           </p>
+          <nav className="mt-5 flex flex-wrap gap-2" aria-label="Workspace pages">
+            {(["dashboard", "classification", "transactions"] as const).map(item => (
+              <button
+                key={item}
+                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${page === item ? "bg-neutral-100 text-neutral-950" : "border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:bg-neutral-900"}`}
+                onClick={() => setPage(item)}
+              >
+                {titleCase(item)}
+              </button>
+            ))}
+          </nav>
         </header>
 
         {error ? <p className="mt-6 rounded-lg border border-red-900 bg-red-950/40 p-4 text-sm text-red-200">{error}</p> : null}
@@ -195,7 +231,31 @@ export function App() {
           ) : null}
         </section>
 
-        <section className="mt-8">
+        {page === "dashboard" ? (
+          <section className="mt-8">
+            <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
+              <div>
+                <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Cash flow</p>
+                <h2 className="mt-2 text-xl font-semibold">Monthly overview</h2>
+              </div>
+              <label className="text-sm text-neutral-400">
+                Month
+                <input className="ml-3 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100" type="month" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value)} />
+              </label>
+            </div>
+            {monthlySummary ? (
+              <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Income</p><p className="mt-2 text-2xl font-semibold text-emerald-300">{formatMoney(monthlySummary.incomeMinor, "GBP")}</p></div>
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Expenses</p><p className="mt-2 text-2xl font-semibold text-red-300">{formatMoney(Math.abs(monthlySummary.expenseMinor), "GBP")}</p></div>
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Net cash flow</p><p className={`mt-2 text-2xl font-semibold ${monthlySummary.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(monthlySummary.netCashFlowMinor, "GBP")}</p></div>
+                <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Unclassified</p><p className="mt-2 text-2xl font-semibold">{monthlySummary.unclassifiedTransactionCount}</p><button className="mt-2 text-sm text-neutral-400 hover:text-neutral-200" onClick={() => setPage("classification")}>Review classifications</button></div>
+              </div>
+            ) : <p className="mt-5 text-sm text-neutral-400">Loading monthly cash flow…</p>}
+            {monthlySummary ? <p className="mt-4 text-sm text-neutral-500">Transfers: {formatMoney(monthlySummary.transferInflowMinor, "GBP")} in · {formatMoney(Math.abs(monthlySummary.transferOutflowMinor), "GBP")} out</p> : null}
+          </section>
+        ) : null}
+
+        <section className={page === "classification" ? "mt-8" : "hidden"}>
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Classification review</p>
             <h2 className="mt-2 text-xl font-semibold">Recurring descriptions without a rule</h2>
@@ -260,7 +320,7 @@ export function App() {
           </div>
         </section>
 
-        <section className="mt-8">
+        <section className={page === "classification" ? "mt-8" : "hidden"}>
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Classification rules</p>
             <h2 className="mt-2 text-xl font-semibold">Saved local decisions</h2>
@@ -297,7 +357,7 @@ export function App() {
           ) : null}
         </section>
 
-        <section className="mt-8">
+        <section className={page === "transactions" ? "mt-8" : "hidden"}>
           <div className="flex items-baseline justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Transactions</p>

@@ -32,8 +32,18 @@ export type LatestImport = {
   createdAt: string;
 } | null;
 
+export type MonthlyCashFlowSummary = {
+  incomeMinor: number;
+  expenseMinor: number;
+  netCashFlowMinor: number;
+  transferInflowMinor: number;
+  transferOutflowMinor: number;
+  unclassifiedTransactionCount: number;
+};
+
 export type DashboardQueryRepository = {
   listAccounts(): Promise<AccountListItem[]>;
   listTransactions(options?: { limit?: number; offset?: number }): Promise<TransactionListItem[]>;
   getLatestImport(): Promise<LatestImport>;
+  getMonthlyCashFlowSummary(month: string): Promise<MonthlyCashFlowSummary>;
 };

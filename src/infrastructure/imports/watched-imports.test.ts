@@ -114,6 +114,30 @@ describe("watched bank imports", () => {
     expect((await db.select().from(transactions))[0]).toMatchObject({ description: "Instant bank deposit", amountMinor: 64546, currencyCode: "USD", transactionType: "funding" });
   });
 
+  test("imports Trading 212 activity into separate investment accounts", async () => {
+    const { db, repository } = await createTestContext();
+    const trading212Import = {
+      source: {
+        slug: "trading212",
+        name: "Trading 212",
+        kind: "trading212" as const,
+        fileName: "activity.pdf",
+        account: null,
+      },
+      records: [
+        record({ externalId: "invest-card", description: "Card purchase", amountMinor: -2893, transactionType: "purchase", account: { externalId: "42368553", name: "Trading 212 Invest", currencyCode: "GBP" } }),
+        record({ externalId: "isa-deposit", description: "TrueLayer", amountMinor: 10000, transactionType: "funding", rawPayload: { row: "2" }, account: { externalId: "42367172", name: "Trading 212 Stocks ISA", currencyCode: "GBP" } }),
+      ],
+    };
+
+    await importStandardFile(repository, { fileName: "2026-07-23_Trading212.json", fileHash: "trading212-file", importFile: trading212Import });
+    expect(await db.select().from(accounts)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "Trading 212 Invest", kind: "investment_portfolio" }),
+      expect.objectContaining({ name: "Trading 212 Stocks ISA", kind: "investment_portfolio" }),
+    ]));
+    expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["expense", "transfer"]);
+  });
+
   test("skips identical files and only stores globally new overlapping records", async () => {
     const { db, repository } = await createTestContext();
     const first = importFile([record({ externalId: "bank-1" }), record({ externalId: "bank-2", description: "Groceries", rawPayload: { row: "2" } })]);
@@ -156,7 +180,7 @@ describe("watched bank imports", () => {
     expect(unclassifiedTransactions).toHaveLength(2);
   });
 
-  test("summarizes monthly cash flow separately by currency without counting transfers in net cash flow", async () => {
+  test("summarizes cash flow by date range, currency, and source without counting transfers in net cash flow", async () => {
     const { db, repository } = await createTestContext();
     await importStandardFile(repository, {
       fileName: "summary.json",
@@ -186,7 +210,7 @@ describe("watched bank imports", () => {
     const robinhood = (await db.select().from(sources)).find(item => item.slug === "robinhood")!;
     await classifications.saveRule({ sourceId: robinhood.id, description: "Dividend", matchMode: "exact", direction: "inflow", economicType: "income" });
 
-    expect(await createDashboardQueries(new DrizzleDashboardQueryRepository(db)).getMonthlyCashFlowSummary("2026-01")).toEqual([
+    expect(await createDashboardQueries(new DrizzleDashboardQueryRepository(db)).getCashFlowSummary({ startDate: "2026-01-01", endDate: "2026-01-31" })).toEqual([
       {
         currencyCode: "GBP",
         incomeMinor: 1000,
@@ -195,6 +219,7 @@ describe("watched bank imports", () => {
         transferInflowMinor: 0,
         transferOutflowMinor: -200,
         unclassifiedTransactionCount: 1,
+        sources: [{ sourceName: "Lloyds", incomeMinor: 1000, expenseMinor: -500, netCashFlowMinor: 500, transferInflowMinor: 0, transferOutflowMinor: -200 }],
       },
       {
         currencyCode: "USD",
@@ -204,6 +229,7 @@ describe("watched bank imports", () => {
         transferInflowMinor: 0,
         transferOutflowMinor: 0,
         unclassifiedTransactionCount: 0,
+        sources: [{ sourceName: "Robinhood", incomeMinor: 125, expenseMinor: 0, netCashFlowMinor: 125, transferInflowMinor: 0, transferOutflowMinor: 0 }],
       },
     ]);
   });

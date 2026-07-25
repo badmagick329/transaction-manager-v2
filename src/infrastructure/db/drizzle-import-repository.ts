@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { descriptionMatchesRule, economicDirectionForAmount, ruleMatchPriority } from "../../app/classification";
+import { descriptionMatchesRule, economicDirectionForAmount, normalizeDescription, ruleMatchPriority } from "../../app/classification";
 import type { ImportBatchSummary, ImportRepository, ProcessedImportFile, ResolvedImportRecord } from "../../app/ports/import-repository";
 import { createSourceRecordHash, resolveImportRecordAccounts } from "../../app/use-cases/import-standard-file";
 import type { AppDatabase } from "./client";
@@ -31,8 +31,8 @@ export class DrizzleImportRepository implements ImportRepository {
   }
 
   async importFile(input: ProcessedImportFile): Promise<ImportBatchSummary> {
-    if (input.importFile.source.kind !== "bank" && input.importFile.source.kind !== "credit_card" && input.importFile.source.kind !== "robinhood") {
-      throw new Error("Only bank, credit-card, and Robinhood imports are supported in this version.");
+    if (input.importFile.source.kind !== "bank" && input.importFile.source.kind !== "credit_card" && input.importFile.source.kind !== "robinhood" && input.importFile.source.kind !== "trading212") {
+      throw new Error("Only bank, credit-card, Robinhood, and Trading 212 imports are supported in this version.");
     }
 
     return this.db.transaction(async tx => {
@@ -88,7 +88,10 @@ export class DrizzleImportRepository implements ImportRepository {
         })
         .returning();
 
-      const source = await this.findOrCreateSource(tx, input.importFile.source);
+      const { source, isNew: isNewSource } = await this.findOrCreateSource(tx, input.importFile.source);
+      if (isNewSource && input.importFile.source.kind === "trading212") {
+        await this.createTrading212DefaultRules(tx, source.id);
+      }
       const sourceRules = await tx.select().from(classificationRules).where(eq(classificationRules.sourceId, source.id));
       const records = resolveImportRecordAccounts(input.importFile);
       let duplicateRecordCount = 0;
@@ -236,7 +239,7 @@ export class DrizzleImportRepository implements ImportRepository {
     sourceInput: ProcessedImportFile["importFile"]["source"],
   ) {
     const existing = await db.query.sources.findFirst({ where: eq(sources.slug, sourceInput.slug) });
-    if (existing) return existing;
+    if (existing) return { source: existing, isNew: false };
 
     const timestamp = now();
     const [source] = await db
@@ -249,7 +252,17 @@ export class DrizzleImportRepository implements ImportRepository {
         updatedAt: timestamp,
       })
       .returning();
-    return source;
+    return { source, isNew: true };
+  }
+
+  private async createTrading212DefaultRules(db: AppDatabase, sourceId: number) {
+    const timestamp = now();
+    await db.insert(classificationRules).values([
+      { sourceId, normalizedDescription: "*", matchMode: "all", direction: "inflow", economicType: "transfer", createdAt: timestamp, updatedAt: timestamp },
+      { sourceId, normalizedDescription: "*", matchMode: "all", direction: "outflow", economicType: "transfer", createdAt: timestamp, updatedAt: timestamp },
+      { sourceId, normalizedDescription: normalizeDescription("Card purchase"), matchMode: "starts_with", direction: "outflow", economicType: "expense", createdAt: timestamp, updatedAt: timestamp },
+      { sourceId, normalizedDescription: normalizeDescription("Card cashback"), matchMode: "starts_with", direction: "inflow", economicType: "income", createdAt: timestamp, updatedAt: timestamp },
+    ]);
   }
 
   private async findOrCreateAccount(
@@ -275,7 +288,7 @@ export class DrizzleImportRepository implements ImportRepository {
         sourceId,
         externalId: record.account.externalId,
         name: record.account.name,
-        kind: sourceKind === "credit_card" ? "credit_card" : sourceKind === "robinhood" ? "investment_portfolio" : "bank_account",
+        kind: sourceKind === "credit_card" ? "credit_card" : sourceKind === "robinhood" || sourceKind === "trading212" ? "investment_portfolio" : "bank_account",
         currencyCode: record.account.currencyCode,
         createdAt: timestamp,
         updatedAt: timestamp,

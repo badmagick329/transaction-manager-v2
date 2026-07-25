@@ -46,19 +46,50 @@ type ClassificationRule = {
   economicType: EconomicType;
 };
 
-type MonthlyCashFlowSummary = {
+type CashFlowSourceBreakdown = {
+  sourceName: string;
+  incomeMinor: number;
+  expenseMinor: number;
+  netCashFlowMinor: number;
+  transferInflowMinor: number;
+  transferOutflowMinor: number;
+};
+
+type CashFlowSummary = {
+  currencyCode: string;
   incomeMinor: number;
   expenseMinor: number;
   netCashFlowMinor: number;
   transferInflowMinor: number;
   transferOutflowMinor: number;
   unclassifiedTransactionCount: number;
+  sources: CashFlowSourceBreakdown[];
 };
 
 const economicTypeOptions: EconomicType[] = ["expense", "income", "transfer", "unclassified"];
 const matchModeOptions: ClassificationMatchMode[] = ["exact", "starts_with", "contains", "all"];
 const transactionPageSize = 100;
 const classificationReviewPageSize = 25;
+
+function toDateInput(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function currentMonthRange() {
+  const now = new Date();
+  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  const end = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0));
+  return { startDate: toDateInput(start), endDate: toDateInput(end) };
+}
+
+function presetDateRange(preset: "month" | "last_30_days" | "last_90_days" | "year_to_date") {
+  if (preset === "month") return currentMonthRange();
+  const end = new Date();
+  const start = new Date(end);
+  if (preset === "year_to_date") start.setUTCMonth(0, 1);
+  else start.setUTCDate(start.getUTCDate() - (preset === "last_30_days" ? 29 : 89));
+  return { startDate: toDateInput(start), endDate: toDateInput(end) };
+}
 
 function formatMoney(amountMinor: number, currencyCode: string) {
   return new Intl.NumberFormat(undefined, {
@@ -76,8 +107,9 @@ export function App() {
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [page, setPage] = useState<"dashboard" | "classification" | "transactions">("dashboard");
-  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7));
-  const [monthlySummary, setMonthlySummary] = useState<MonthlyCashFlowSummary[] | null>(null);
+  const [dateRange, setDateRange] = useState(currentMonthRange);
+  const [datePreset, setDatePreset] = useState<"month" | "last_30_days" | "last_90_days" | "year_to_date" | "custom">("month");
+  const [cashFlowSummary, setCashFlowSummary] = useState<CashFlowSummary[] | null>(null);
   const [reviewGroups, setReviewGroups] = useState<ClassificationReviewGroup[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
   const [loading, setLoading] = useState(true);
@@ -101,10 +133,10 @@ export function App() {
     setVisibleReviewGroupCount(classificationReviewPageSize);
   };
 
-  const loadMonthlySummary = async (month: string) => {
-    const response = await fetch(`/api/dashboard/monthly?month=${month}`);
-    if (!response.ok) throw new Error("Unable to load monthly cash flow.");
-    setMonthlySummary(await response.json());
+  const loadCashFlowSummary = async ({ startDate, endDate }: { startDate: string; endDate: string }) => {
+    const response = await fetch(`/api/dashboard/cash-flow?start=${startDate}&end=${endDate}`);
+    if (!response.ok) throw new Error("Unable to load cash flow.");
+    setCashFlowSummary(await response.json());
     setError(null);
   };
 
@@ -144,10 +176,10 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    void loadMonthlySummary(selectedMonth).catch(summaryError => {
-      setError(summaryError instanceof Error ? summaryError.message : "Unable to load monthly cash flow.");
+    void loadCashFlowSummary(dateRange).catch(summaryError => {
+      setError(summaryError instanceof Error ? summaryError.message : "Unable to load cash flow.");
     });
-  }, [selectedMonth]);
+  }, [dateRange]);
 
   useEffect(() => {
     if (page !== "transactions") return;
@@ -252,13 +284,31 @@ export function App() {
                 <h2 className="mt-2 text-xl font-semibold">Monthly overview</h2>
               </div>
               <label className="text-sm text-neutral-400">
-                Month
-                <input className="ml-3 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100" type="month" value={selectedMonth} onChange={event => setSelectedMonth(event.target.value)} />
+                Range
+                <select
+                  className="ml-3 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100"
+                  value={datePreset}
+                  onChange={event => {
+                    const preset = event.target.value as typeof datePreset;
+                    setDatePreset(preset);
+                    if (preset !== "custom") setDateRange(presetDateRange(preset));
+                  }}
+                >
+                  <option value="month">This month</option>
+                  <option value="last_30_days">Last 30 days</option>
+                  <option value="last_90_days">Last 90 days</option>
+                  <option value="year_to_date">Year to date</option>
+                  <option value="custom">Custom</option>
+                </select>
               </label>
             </div>
-            {monthlySummary === null ? <p className="mt-5 text-sm text-neutral-400">Loading monthly cash flow…</p> : null}
-            {monthlySummary?.length === 0 ? <p className="mt-5 text-sm text-neutral-400">No transactions for this month.</p> : null}
-            {monthlySummary?.map(summary => (
+            <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-neutral-400">
+              <label>From <input className="ml-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100" type="date" value={dateRange.startDate} onChange={event => { setDatePreset("custom"); setDateRange(current => ({ ...current, startDate: event.target.value })); }} /></label>
+              <label>To <input className="ml-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100" type="date" value={dateRange.endDate} onChange={event => { setDatePreset("custom"); setDateRange(current => ({ ...current, endDate: event.target.value })); }} /></label>
+            </div>
+            {cashFlowSummary === null ? <p className="mt-5 text-sm text-neutral-400">Loading cash flow…</p> : null}
+            {cashFlowSummary?.length === 0 ? <p className="mt-5 text-sm text-neutral-400">No transactions for this range.</p> : null}
+            {cashFlowSummary?.map(summary => (
               <div key={summary.currencyCode} className="mt-5">
                 <p className="text-sm font-medium text-neutral-300">{summary.currencyCode}</p>
                 <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -267,7 +317,24 @@ export function App() {
                   <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Net cash flow</p><p className={`mt-2 text-2xl font-semibold ${summary.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(summary.netCashFlowMinor, summary.currencyCode)}</p></div>
                   <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Unclassified</p><p className="mt-2 text-2xl font-semibold">{summary.unclassifiedTransactionCount}</p><button className="mt-2 text-sm text-neutral-400 hover:text-neutral-200" onClick={() => setPage("classification")}>Review classifications</button></div>
                 </div>
-                <p className="mt-4 text-sm text-neutral-500">Transfers: {formatMoney(summary.transferInflowMinor, summary.currencyCode)} in · {formatMoney(Math.abs(summary.transferOutflowMinor), summary.currencyCode)} out</p>
+                <p className="mt-4 text-sm text-neutral-500">Transfer activity: {formatMoney(summary.transferInflowMinor, summary.currencyCode)} in · {formatMoney(Math.abs(summary.transferOutflowMinor), summary.currencyCode)} out · {formatMoney(summary.transferInflowMinor + summary.transferOutflowMinor, summary.currencyCode)} net</p>
+                <div className="mt-4 overflow-x-auto rounded-2xl border border-neutral-800">
+                  <table className="w-full min-w-[680px] text-left text-sm">
+                    <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500"><tr><th className="px-4 py-3 font-medium">Source</th><th className="px-4 py-3 text-right font-medium">Income</th><th className="px-4 py-3 text-right font-medium">Expenses</th><th className="px-4 py-3 text-right font-medium">Net flow</th><th className="px-4 py-3 text-right font-medium">Transfer activity</th></tr></thead>
+                    <tbody className="divide-y divide-neutral-800">
+                      {summary.sources.map(source => (
+                        <tr key={source.sourceName} className="bg-neutral-950/30">
+                          <td className="px-4 py-3 text-neutral-100">{source.sourceName}</td>
+                          <td className="px-4 py-3 text-right text-emerald-300">{formatMoney(source.incomeMinor, summary.currencyCode)}</td>
+                          <td className="px-4 py-3 text-right text-red-300">{formatMoney(Math.abs(source.expenseMinor), summary.currencyCode)}</td>
+                          <td className={`px-4 py-3 text-right ${source.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(source.netCashFlowMinor, summary.currencyCode)}</td>
+                          <td className="px-4 py-3 text-right text-neutral-400">{formatMoney(source.transferInflowMinor, summary.currencyCode)} in · {formatMoney(Math.abs(source.transferOutflowMinor), summary.currencyCode)} out · {formatMoney(source.transferInflowMinor + source.transferOutflowMinor, summary.currencyCode)} net</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="mt-2 text-xs text-neutral-600">Transfer activity includes internal account movements and is not reconciled across accounts.</p>
               </div>
             ))}
           </section>

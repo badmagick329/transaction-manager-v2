@@ -1,9 +1,10 @@
 import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
 import type {
   AccountListItem,
+  CashFlowSourceBreakdown,
+  CashFlowSummary,
   DashboardQueryRepository,
   LatestImport,
-  MonthlyCashFlowSummary,
   TransactionListItem,
 } from "../../app/ports/dashboard-query-repository";
 import type { EconomicType } from "../../core/finance/constants";
@@ -66,10 +67,12 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
     };
   }
 
-  async getMonthlyCashFlowSummary(month: string): Promise<MonthlyCashFlowSummary[]> {
-    const [year, monthNumber] = month.split("-").map(Number);
-    const nextMonth = new Date(Date.UTC(year, monthNumber, 1)).toISOString().slice(0, 7);
-    const summaries = await this.db
+  async getCashFlowSummary({ startDate, endDate }: { startDate: string; endDate: string }): Promise<CashFlowSummary[]> {
+    const endExclusive = new Date(`${endDate}T00:00:00Z`);
+    endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+    const dateRange = and(gte(transactions.transactionDate, startDate), lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)));
+    const [summaries, sourceRows] = await Promise.all([
+      this.db
       .select({
         currencyCode: transactions.currencyCode,
         incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
@@ -79,9 +82,37 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         unclassifiedTransactionCount: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'unclassified' then 1 else 0 end), 0)`,
       })
       .from(transactions)
-      .where(and(gte(transactions.transactionDate, `${month}-01`), lt(transactions.transactionDate, `${nextMonth}-01`)))
+      .where(dateRange)
       .groupBy(transactions.currencyCode)
-      .orderBy(transactions.currencyCode);
+      .orderBy(transactions.currencyCode),
+      this.db
+        .select({
+          currencyCode: transactions.currencyCode,
+          sourceName: sources.name,
+          incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
+          expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
+          transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
+          transferOutflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} < 0 then ${transactions.amountMinor} else 0 end), 0)`,
+        })
+        .from(transactions)
+        .innerJoin(sources, eq(transactions.sourceId, sources.id))
+        .where(dateRange)
+        .groupBy(transactions.currencyCode, sources.name)
+        .orderBy(transactions.currencyCode, sources.name),
+    ]);
+    const sourceBreakdownByCurrency = new Map<string, CashFlowSourceBreakdown[]>();
+    for (const row of sourceRows) {
+      const breakdown = sourceBreakdownByCurrency.get(row.currencyCode) ?? [];
+      breakdown.push({
+        sourceName: row.sourceName,
+        incomeMinor: row.incomeMinor,
+        expenseMinor: row.expenseMinor,
+        netCashFlowMinor: row.incomeMinor + row.expenseMinor,
+        transferInflowMinor: row.transferInflowMinor,
+        transferOutflowMinor: row.transferOutflowMinor,
+      });
+      sourceBreakdownByCurrency.set(row.currencyCode, breakdown);
+    }
     return summaries.map(summary => ({
       currencyCode: summary.currencyCode,
       incomeMinor: summary.incomeMinor,
@@ -90,6 +121,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       transferInflowMinor: summary.transferInflowMinor,
       transferOutflowMinor: summary.transferOutflowMinor,
       unclassifiedTransactionCount: summary.unclassifiedTransactionCount,
+      sources: sourceBreakdownByCurrency.get(summary.currencyCode) ?? [],
     }));
   }
 }

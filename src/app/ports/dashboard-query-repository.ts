@@ -32,7 +32,16 @@ export type LatestImport = {
   createdAt: string;
 } | null;
 
-export type MonthlyCashFlowSummary = {
+export type CashFlowSourceBreakdown = {
+  sourceName: string;
+  incomeMinor: number;
+  expenseMinor: number;
+  netCashFlowMinor: number;
+  transferInflowMinor: number;
+  transferOutflowMinor: number;
+};
+
+export type CashFlowSummary = {
   currencyCode: string;
   incomeMinor: number;
   expenseMinor: number;
@@ -40,12 +49,13 @@ export type MonthlyCashFlowSummary = {
   transferInflowMinor: number;
   transferOutflowMinor: number;
   unclassifiedTransactionCount: number;
+  sources: CashFlowSourceBreakdown[];
 };
 
 export type DashboardQueryRepository = {
   listAccounts(): Promise<AccountListItem[]>;
   listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType }): Promise<TransactionListItem[]>;
   getLatestImport(): Promise<LatestImport>;
-  getMonthlyCashFlowSummary(month: string): Promise<MonthlyCashFlowSummary[]>;
+  getCashFlowSummary(range: { startDate: string; endDate: string }): Promise<CashFlowSummary[]>;
 };
 import type { EconomicType } from "../../core/finance/constants";

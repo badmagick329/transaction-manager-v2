@@ -69,13 +69,15 @@ export function createHttpRoutes({ queries, classifications, indexHtml }: Create
       },
     },
 
-    "/api/dashboard/monthly": {
+    "/api/dashboard/cash-flow": {
       async GET(request: Request) {
-        const month = new URL(request.url).searchParams.get("month");
-        if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
-          return Response.json({ error: "month must use YYYY-MM." }, { status: 400 });
+        const url = new URL(request.url);
+        const startDate = url.searchParams.get("start");
+        const endDate = url.searchParams.get("end");
+        if (!startDate || !endDate || !/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate) || startDate > endDate) {
+          return Response.json({ error: "start and end must use YYYY-MM-DD, with start on or before end." }, { status: 400 });
         }
-        return Response.json(await queries.getMonthlyCashFlowSummary(month));
+        return Response.json(await queries.getCashFlowSummary({ startDate, endDate }));
       },
     },
 

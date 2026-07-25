@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { descriptionMatchesRule, economicDirectionForAmount, normalizeDescription, ruleMatchPriority } from "../../app/classification";
+import { descriptionMatchesRule, economicDirectionForAmount, isEconomicTypeAllowedForDirection, normalizeDescription, ruleMatchPriority } from "../../app/classification";
 import type {
   ClassificationRepository,
   ClassificationReviewGroup,
@@ -93,6 +93,9 @@ export class DrizzleClassificationRepository implements ClassificationRepository
   }
 
   async saveRule(input: SaveClassificationRuleInput): Promise<ClassificationRuleResult> {
+    if (!isEconomicTypeAllowedForDirection(input.economicType, input.direction)) {
+      throw new Error(`${input.economicType} is not valid for a ${input.direction} transaction.`);
+    }
     const normalizedDescription = normalizeDescription(input.description);
     const timestamp = now();
     return this.db.transaction(async tx => {

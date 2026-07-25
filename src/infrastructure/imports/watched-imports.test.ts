@@ -466,4 +466,14 @@ describe("watched bank imports", () => {
 
     expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["transfer", "transfer"]);
   });
+
+  test("rejects economic types that conflict with a transaction direction", async () => {
+    const { db, repository } = await createTestContext();
+    await importStandardFile(repository, { fileName: "direction.json", fileHash: "direction-rule", importFile: importFile([record()]) });
+    const source = (await db.select().from(sources))[0]!;
+    const classifications = new DrizzleClassificationRepository(db);
+
+    await expect(classifications.saveRule({ sourceId: source.id, description: "Coffee shop", matchMode: "exact", direction: "inflow", economicType: "expense" })).rejects.toThrow("expense is not valid for a inflow transaction.");
+    await expect(classifications.saveRule({ sourceId: source.id, description: "Coffee shop", matchMode: "exact", direction: "outflow", economicType: "income" })).rejects.toThrow("income is not valid for a outflow transaction.");
+  });
 });

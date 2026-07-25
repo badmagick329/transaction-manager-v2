@@ -1,4 +1,12 @@
-import type { ClassificationMatchMode, EconomicDirection } from "../core/finance/constants";
+import type { ClassificationMatchMode, EconomicDirection, EconomicType } from "../core/finance/constants";
+
+export function economicTypesForDirection(direction: EconomicDirection): EconomicType[] {
+  return direction === "inflow" ? ["income", "transfer", "unclassified"] : ["expense", "transfer", "unclassified"];
+}
+
+export function isEconomicTypeAllowedForDirection(economicType: EconomicType, direction: EconomicDirection) {
+  return economicTypesForDirection(direction).includes(economicType);
+}
 
 export function normalizeDescription(description: string) {
   return description.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase();

@@ -71,6 +71,10 @@ const matchModeOptions: ClassificationMatchMode[] = ["exact", "starts_with", "co
 const transactionPageSize = 100;
 const classificationReviewPageSize = 25;
 
+function economicTypeOptionsForDirection(direction: EconomicDirection): EconomicType[] {
+  return direction === "inflow" ? ["income", "transfer", "unclassified"] : ["expense", "transfer", "unclassified"];
+}
+
 function toDateInput(date: Date) {
   return date.toISOString().slice(0, 10);
 }
@@ -387,7 +391,7 @@ export function App() {
                       >
                         {matchModeOptions.map(matchMode => <option key={matchMode} value={matchMode}>{titleCase(matchMode)}</option>)}
                       </select>
-                      {economicTypeOptions.map(economicType => (
+                      {economicTypeOptionsForDirection(group.direction).map(economicType => (
                         <button
                           key={economicType}
                           className="rounded-lg border border-neutral-700 px-3 py-1.5 text-xs font-medium text-neutral-200 transition hover:border-neutral-500 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50"
@@ -435,7 +439,7 @@ export function App() {
                           disabled={savingKey === `rule-${rule.id}`}
                           onChange={event => void saveRule({ sourceId: rule.sourceId, description: rule.normalizedDescription, direction: rule.direction, matchMode: rule.matchMode, economicType: event.target.value as EconomicType }, `rule-${rule.id}`)}
                         >
-                          {economicTypeOptions.map(economicType => <option key={economicType} value={economicType}>{titleCase(economicType)}</option>)}
+                          {economicTypeOptionsForDirection(rule.direction).map(economicType => <option key={economicType} value={economicType}>{titleCase(economicType)}</option>)}
                         </select>
                       </td>
                       <td className="px-4 py-3 text-right"><button className="text-sm text-red-300 hover:text-red-200 disabled:opacity-50" disabled={savingKey === `delete-${rule.id}`} onClick={() => void deleteRule(rule)}>{savingKey === `delete-${rule.id}` ? "Deleting…" : "Delete"}</button></td>

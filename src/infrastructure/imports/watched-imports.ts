@@ -8,6 +8,7 @@ type WatchedImportsOptions = {
   repository: ImportRepository;
   rootPath?: string;
   logger?: Pick<Console, "error" | "info">;
+  afterProcessedImport?: () => Promise<void>;
 };
 
 type ImportPaths = {
@@ -21,6 +22,7 @@ export async function startWatchedImports({
   repository,
   rootPath = resolve(process.cwd(), "imports"),
   logger = console,
+  afterProcessedImport,
 }: WatchedImportsOptions) {
   const paths: ImportPaths = {
     incoming: join(rootPath, "incoming"),
@@ -35,7 +37,7 @@ export async function startWatchedImports({
     const entries = await readdir(paths.incoming, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isFile() && extname(entry.name).toLowerCase() === ".json") {
-        await claimAndProcess(join(paths.incoming, entry.name), paths, repository, logger);
+        await claimAndProcess(join(paths.incoming, entry.name), paths, repository, logger, afterProcessedImport);
       }
     }
   };
@@ -96,7 +98,7 @@ async function recoverProcessingFiles(
       } else if (batch?.status === "failed") {
         await moveToDestination(path, paths.failed, fileHash);
       } else {
-        await processClaimedFile(path, paths, repository, logger);
+        await processClaimedFile(path, paths, repository, logger, undefined);
       }
     } catch (error) {
       logger.error(`Unable to recover import ${entry.name}`, error);
@@ -109,6 +111,7 @@ async function claimAndProcess(
   paths: ImportPaths,
   repository: ImportRepository,
   logger: Pick<Console, "error" | "info">,
+  afterProcessedImport?: () => Promise<void>,
 ) {
   const name = basename(incomingPath);
   const claimedPath = join(paths.processing, name);
@@ -118,7 +121,7 @@ async function claimAndProcess(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") logger.error(`Unable to claim import ${name}`, error);
     return;
   }
-  await processClaimedFile(claimedPath, paths, repository, logger);
+  await processClaimedFile(claimedPath, paths, repository, logger, afterProcessedImport);
 }
 
 async function processClaimedFile(
@@ -126,6 +129,7 @@ async function processClaimedFile(
   paths: ImportPaths,
   repository: ImportRepository,
   logger: Pick<Console, "error" | "info">,
+  afterProcessedImport?: () => Promise<void>,
 ) {
   const fileName = basename(claimedPath);
   const fileHash = await hashFile(claimedPath);
@@ -139,6 +143,14 @@ async function processClaimedFile(
       await moveToDestination(claimedPath, paths.failed, fileHash);
       logger.error(`Import failed for ${fileName}: ${result.errorMessage}`);
       return;
+    }
+
+    if (result.kind === "processed" && (importFile.source.slug === "hsbc" || importFile.source.slug === "paypal") && afterProcessedImport) {
+      try {
+        await afterProcessedImport();
+      } catch (error) {
+        logger.error(`Imported ${fileName}, but unable to propose PayPal matches`, error);
+      }
     }
 
     await moveToDestination(claimedPath, paths.processed, fileHash);

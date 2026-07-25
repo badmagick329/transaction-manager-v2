@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lt, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
 import type {
   AccountListItem,
   CashFlowSourceBreakdown,
@@ -9,7 +9,7 @@ import type {
 } from "../../app/ports/dashboard-query-repository";
 import type { EconomicType } from "../../core/finance/constants";
 import type { AppDatabase } from "./client";
-import { accounts, importBatches, sources, transactions } from "./schema";
+import { accounts, importBatches, sources, transactionLinks, transactions } from "./schema";
 
 export class DrizzleDashboardQueryRepository implements DashboardQueryRepository {
   constructor(private readonly db: AppDatabase) {}
@@ -47,8 +47,22 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .innerJoin(accounts, eq(transactions.accountId, accounts.id));
     const filteredQuery = options?.economicType ? query.where(eq(transactions.economicType, options.economicType)) : query;
     const orderedQuery = filteredQuery.orderBy(desc(transactions.transactionDate), desc(transactions.id));
-    if (!options?.limit) return orderedQuery;
-    return orderedQuery.limit(options.limit).offset(options.offset ?? 0);
+    const transactionRows = options?.limit ? await orderedQuery.limit(options.limit).offset(options.offset ?? 0) : await orderedQuery;
+    if (transactionRows.length === 0) return [];
+    const transactionIds = transactionRows.map(transaction => transaction.id);
+    const links = await this.db.select().from(transactionLinks).where(and(
+      eq(transactionLinks.linkType, "funds"),
+      eq(transactionLinks.createdBy, "system_rule"),
+      or(inArray(transactionLinks.fromTransactionId, transactionIds), inArray(transactionLinks.toTransactionId, transactionIds)),
+    ));
+    return transactionRows.map(transaction => {
+      const fromLink = links.find(link => link.fromTransactionId === transaction.id && link.status !== "rejected");
+      const toLink = links.find(link => link.toTransactionId === transaction.id && link.status !== "rejected");
+      const reconciliationLabel = fromLink
+        ? fromLink.status === "confirmed" ? "Linked to PayPal purchase" : "PayPal match pending"
+        : toLink ? toLink.status === "confirmed" ? "Funded by HSBC PayPal payment" : "HSBC match pending" : null;
+      return { ...transaction, reconciliationLabel };
+    });
   }
 
   async getLatestImport(): Promise<LatestImport> {
@@ -70,7 +84,11 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
   async getCashFlowSummary({ startDate, endDate }: { startDate: string; endDate: string }): Promise<CashFlowSummary[]> {
     const endExclusive = new Date(`${endDate}T00:00:00Z`);
     endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
-    const dateRange = and(gte(transactions.transactionDate, startDate), lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)));
+    const dateRange = and(
+      gte(transactions.transactionDate, startDate),
+      lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)),
+      sql`not exists (select 1 from ${transactionLinks} where ${transactionLinks.fromTransactionId} = ${transactions.id} and ${transactionLinks.linkType} = 'funds' and ${transactionLinks.status} = 'confirmed')`,
+    );
     const [summaries, sourceRows] = await Promise.all([
       this.db
       .select({

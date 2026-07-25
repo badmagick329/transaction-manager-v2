@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `transaction_links_pair_type_unique` ON `transaction_links` (`from_transaction_id`,`to_transaction_id`,`link_type`);

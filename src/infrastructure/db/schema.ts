@@ -227,6 +227,7 @@ export const transactionLinks = sqliteTable(
   table => ({
     fromIdx: index("transaction_links_from_idx").on(table.fromTransactionId),
     toIdx: index("transaction_links_to_idx").on(table.toTransactionId),
+    pairTypeUnique: uniqueIndex("transaction_links_pair_type_unique").on(table.fromTransactionId, table.toTransactionId, table.linkType),
   }),
 );
 

@@ -8,6 +8,7 @@ import { createDb } from "../db/client";
 import { DrizzleImportRepository } from "../db/drizzle-import-repository";
 import { DrizzleDashboardQueryRepository } from "../db/drizzle-dashboard-query-repository";
 import { DrizzleClassificationRepository } from "../db/drizzle-classification-repository";
+import { DrizzlePayPalReconciliationRepository } from "../db/drizzle-paypal-reconciliation-repository";
 import { correctHsbcDirectDebitTransfers } from "../db/correct-hsbc-direct-debits";
 import { importStandardFile } from "../../app/use-cases/import-standard-file";
 import { createDashboardQueries } from "../../app/use-cases/query-dashboard";
@@ -161,6 +162,56 @@ describe("watched bank imports", () => {
       expect.objectContaining({ name: "Trading 212 Stocks ISA", kind: "investment_portfolio" }),
     ]));
     expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["expense", "transfer"]);
+  });
+
+  test("proposes PayPal funding matches and excludes only confirmed HSBC duplicates from cash flow", async () => {
+    const { db, repository } = await createTestContext();
+    const hsbcImport = importFile([record({ externalId: "hsbc-paypal", description: "PAYPAL PAYMENT", amountMinor: -2999, transactionDate: "2026-02-18", rawPayload: { row: "1" } })]);
+    hsbcImport.source.slug = "hsbc";
+    hsbcImport.source.name = "HSBC";
+    const paypalImport = {
+      source: { slug: "paypal", name: "PayPal", kind: "paypal" as const, fileName: "activity.csv", account: null },
+      records: [record({ externalId: "paypal-merchant", description: "LinkedIn Ireland", amountMinor: -2999, transactionDate: "2026-02-16", transactionType: "purchase", rawPayload: { row: "2" }, account: { externalId: null, name: "PayPal GBP balance", currencyCode: "GBP" } })],
+    };
+    await importStandardFile(repository, { fileName: "hsbc.json", fileHash: "hsbc-paypal-match", importFile: hsbcImport });
+    await importStandardFile(repository, { fileName: "paypal.json", fileHash: "paypal-match", importFile: paypalImport });
+    const classifications = new DrizzleClassificationRepository(db);
+    const [hsbc, paypal] = await db.select().from(sources);
+    await classifications.saveRule({ sourceId: hsbc!.id, description: "PAYPAL PAYMENT", matchMode: "exact", direction: "outflow", economicType: "expense" });
+    await classifications.saveRule({ sourceId: paypal!.id, description: "LinkedIn Ireland", matchMode: "exact", direction: "outflow", economicType: "expense" });
+
+    const reconciliation = new DrizzlePayPalReconciliationRepository(db);
+    expect(await reconciliation.proposePayPalPaymentLinks()).toBe(1);
+    expect(await reconciliation.proposePayPalPaymentLinks()).toBe(0);
+    const [link] = await reconciliation.listPayPalPaymentLinks();
+    expect(link).toMatchObject({ status: "pending", hsbcTransaction: { description: "PAYPAL PAYMENT" }, paypalTransaction: { description: "LinkedIn Ireland" } });
+
+    const dashboard = createDashboardQueries(new DrizzleDashboardQueryRepository(db));
+    expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-5998);
+    await reconciliation.setPayPalPaymentLinkStatus(link!.id, "confirmed");
+    expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-2999);
+    await reconciliation.setPayPalPaymentLinkStatus(link!.id, "rejected");
+    expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-5998);
+    await reconciliation.setPayPalPaymentLinkStatus(link!.id, "pending");
+    expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-5998);
+  });
+
+  test("does not propose ambiguous PayPal matches", async () => {
+    const { db, repository } = await createTestContext();
+    const hsbcImport = importFile([record({ externalId: "hsbc-paypal", description: "PAYPAL PAYMENT", amountMinor: -999, transactionDate: "2026-03-04" })]);
+    hsbcImport.source.slug = "hsbc";
+    const paypalImport = {
+      source: { slug: "paypal", name: "PayPal", kind: "paypal" as const, fileName: "activity.csv", account: null },
+      records: [
+        record({ externalId: "paypal-1", description: "Merchant one", amountMinor: -999, transactionDate: "2026-03-01", transactionType: "purchase", account: { externalId: null, name: "PayPal GBP balance", currencyCode: "GBP" } }),
+        record({ externalId: "paypal-2", description: "Merchant two", amountMinor: -999, transactionDate: "2026-03-02", transactionType: "purchase", rawPayload: { row: "2" }, account: { externalId: null, name: "PayPal GBP balance", currencyCode: "GBP" } }),
+      ],
+    };
+    await importStandardFile(repository, { fileName: "hsbc.json", fileHash: "ambiguous-hsbc", importFile: hsbcImport });
+    await importStandardFile(repository, { fileName: "paypal.json", fileHash: "ambiguous-paypal", importFile: paypalImport });
+    const reconciliation = new DrizzlePayPalReconciliationRepository(db);
+    expect(await reconciliation.proposePayPalPaymentLinks()).toBe(0);
+    expect(await reconciliation.listPayPalPaymentLinks()).toHaveLength(0);
   });
 
   test("skips identical files and only stores globally new overlapping records", async () => {

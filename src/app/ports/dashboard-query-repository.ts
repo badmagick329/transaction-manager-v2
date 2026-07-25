@@ -18,6 +18,7 @@ export type TransactionListItem = {
   transactionType: string;
   economicType: string;
   status: string;
+  reconciliationLabel: string | null;
 };
 
 export type LatestImport = {

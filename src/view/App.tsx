@@ -20,6 +20,16 @@ type Transaction = {
   currencyCode: string;
   transactionType: string;
   economicType: string;
+  reconciliationLabel: string | null;
+};
+
+type PayPalPaymentLink = {
+  id: number;
+  status: "pending" | "confirmed" | "rejected";
+  confidenceScore: number | null;
+  matchReason: string | null;
+  hsbcTransaction: { id: number; transactionDate: string; description: string; amountMinor: number; currencyCode: string };
+  paypalTransaction: { id: number; transactionDate: string; description: string; amountMinor: number; currencyCode: string };
 };
 
 type EconomicType = "expense" | "income" | "transfer" | "unclassified";
@@ -110,12 +120,13 @@ function titleCase(value: string) {
 export function App() {
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [page, setPage] = useState<"dashboard" | "classification" | "transactions">("dashboard");
+  const [page, setPage] = useState<"dashboard" | "classification" | "reconciliation" | "transactions">("dashboard");
   const [dateRange, setDateRange] = useState(currentMonthRange);
   const [datePreset, setDatePreset] = useState<"month" | "last_30_days" | "last_90_days" | "year_to_date" | "custom">("month");
   const [cashFlowSummary, setCashFlowSummary] = useState<CashFlowSummary[] | null>(null);
   const [reviewGroups, setReviewGroups] = useState<ClassificationReviewGroup[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
+  const [payPalLinks, setPayPalLinks] = useState<PayPalPaymentLink[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -135,6 +146,12 @@ export function App() {
     setReviewGroups(await reviewResponse.json());
     setRules(await rulesResponse.json());
     setVisibleReviewGroupCount(classificationReviewPageSize);
+  };
+
+  const loadPayPalLinks = async () => {
+    const response = await fetch("/api/reconciliation/paypal");
+    if (!response.ok) throw new Error("Unable to load PayPal matches.");
+    setPayPalLinks(await response.json());
   };
 
   const loadCashFlowSummary = async ({ startDate, endDate }: { startDate: string; endDate: string }) => {
@@ -166,6 +183,7 @@ export function App() {
           fetch("/api/imports/latest"),
           loadTransactions(),
           loadClassifications(),
+          loadPayPalLinks(),
         ]);
         if (!importResponse.ok) throw new Error("Unable to load the finance workspace.");
         setLatestImport(await importResponse.json());
@@ -237,6 +255,26 @@ export function App() {
     }
   };
 
+  const updatePayPalLink = async (linkId: number, status: PayPalPaymentLink["status"]) => {
+    const key = `paypal-link-${linkId}`;
+    setSavingKey(key);
+    setError(null);
+    try {
+      const response = await fetch("/api/reconciliation/paypal/status", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ linkId, status }),
+      });
+      const responseBody = await response.json();
+      if (!response.ok) throw new Error(responseBody.error ?? "Unable to update PayPal match.");
+      await Promise.all([loadPayPalLinks(), loadTransactions(), loadCashFlowSummary(dateRange)]);
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Unable to update PayPal match.");
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100">
       <div className="mx-auto w-full max-w-6xl px-6 py-10 sm:px-8">
@@ -247,7 +285,7 @@ export function App() {
             Put completed parser JSON files into <code className="rounded bg-neutral-800 px-1.5 py-0.5">imports/incoming</code>.
           </p>
           <nav className="mt-5 flex flex-wrap gap-2" aria-label="Workspace pages">
-            {(["dashboard", "classification", "transactions"] as const).map(item => (
+            {(["dashboard", "classification", "reconciliation", "transactions"] as const).map(item => (
               <button
                 key={item}
                 className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${page === item ? "bg-neutral-100 text-neutral-950" : "border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:bg-neutral-900"}`}
@@ -451,6 +489,38 @@ export function App() {
           ) : null}
         </section>
 
+        <section className={page === "reconciliation" ? "mt-8" : "hidden"}>
+          <div>
+            <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Reconciliation</p>
+            <h2 className="mt-2 text-xl font-semibold">PayPal payments funded by HSBC</h2>
+            <p className="mt-2 text-sm text-neutral-400">Confirm a match to keep the named PayPal purchase as the only expense in cash-flow totals.</p>
+          </div>
+          {!loading && payPalLinks.length === 0 ? <div className="mt-5 rounded-2xl border border-dashed border-neutral-800 p-6 text-sm text-neutral-400">No PayPal payment matches found.</div> : null}
+          <div className="mt-5 space-y-3">
+            {payPalLinks.map(link => {
+              const key = `paypal-link-${link.id}`;
+              const saving = savingKey === key;
+              return (
+                <article key={link.id} className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5">
+                  <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-start">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.18em] text-neutral-500">{titleCase(link.status)} match</p>
+                      <p className="mt-2 text-sm text-neutral-400">HSBC {link.hsbcTransaction.transactionDate} · {formatMoney(link.hsbcTransaction.amountMinor, link.hsbcTransaction.currencyCode)} · {link.hsbcTransaction.description}</p>
+                      <p className="mt-1 text-sm text-neutral-100">PayPal {link.paypalTransaction.transactionDate} · {formatMoney(link.paypalTransaction.amountMinor, link.paypalTransaction.currencyCode)} · {link.paypalTransaction.description}</p>
+                      <p className="mt-2 text-xs text-neutral-500">{link.matchReason}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {link.status !== "confirmed" ? <button className="rounded-lg border border-emerald-700 px-3 py-1.5 text-sm text-emerald-200 hover:bg-emerald-950/50 disabled:opacity-50" disabled={saving} onClick={() => void updatePayPalLink(link.id, "confirmed")}>{saving ? "Saving…" : "Confirm"}</button> : null}
+                      {link.status !== "rejected" ? <button className="rounded-lg border border-red-900 px-3 py-1.5 text-sm text-red-200 hover:bg-red-950/50 disabled:opacity-50" disabled={saving} onClick={() => void updatePayPalLink(link.id, "rejected")}>Reject</button> : null}
+                      {link.status !== "pending" ? <button className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:bg-neutral-800 disabled:opacity-50" disabled={saving} onClick={() => void updatePayPalLink(link.id, "pending")}>Reopen</button> : null}
+                    </div>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+
         <section className={page === "transactions" ? "mt-8" : "hidden"}>
           <div className="flex items-baseline justify-between">
             <div>
@@ -490,7 +560,7 @@ export function App() {
                   {transactions.map(transaction => (
                     <tr key={transaction.id} className="bg-neutral-950/30">
                       <td className="whitespace-nowrap px-4 py-3 text-neutral-400">{transaction.transactionDate}</td>
-                      <td className="px-4 py-3 text-neutral-100">{transaction.description}</td>
+                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}</td>
                       <td className="px-4 py-3 text-neutral-400">{transaction.accountName}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.transactionType)}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.economicType)}</td>

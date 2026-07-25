@@ -1,11 +1,13 @@
 import type { createDashboardQueries } from "../../app/use-cases/query-dashboard";
 import type { createClassificationActions } from "../../app/use-cases/classify-transactions";
-import { classificationMatchModes, economicDirections, economicTypes } from "../../core/finance/constants";
+import type { createPayPalPaymentReconciliation } from "../../app/use-cases/reconcile-paypal-payments";
+import { classificationMatchModes, economicDirections, economicTypes, linkStatuses } from "../../core/finance/constants";
 import { z } from "zod";
 
 type CreateHttpRoutesOptions = {
   queries: ReturnType<typeof createDashboardQueries>;
   classifications: ReturnType<typeof createClassificationActions>;
+  reconciliation: ReturnType<typeof createPayPalPaymentReconciliation>;
   indexHtml: unknown;
 };
 
@@ -18,12 +20,13 @@ const saveRuleSchema = z.object({
 });
 
 const deleteRuleSchema = z.object({ ruleId: z.number().int().positive() });
+const updatePayPalLinkSchema = z.object({ linkId: z.number().int().positive(), status: z.enum(linkStatuses) });
 
 async function parseBody<T extends z.ZodType>(request: Request, schema: T): Promise<z.output<T>> {
   return schema.parse(await request.json());
 }
 
-export function createHttpRoutes({ queries, classifications, indexHtml }: CreateHttpRoutesOptions) {
+export function createHttpRoutes({ queries, classifications, reconciliation, indexHtml }: CreateHttpRoutesOptions) {
   return {
     "/*": indexHtml,
 
@@ -107,6 +110,23 @@ export function createHttpRoutes({ queries, classifications, indexHtml }: Create
           return Response.json(await classifications.deleteRule(ruleId));
         } catch (error) {
           return Response.json({ error: error instanceof Error ? error.message : "Unable to delete classification rule." }, { status: 400 });
+        }
+      },
+    },
+
+    "/api/reconciliation/paypal": {
+      async GET() {
+        return Response.json(await reconciliation.listLinks());
+      },
+    },
+
+    "/api/reconciliation/paypal/status": {
+      async POST(request: Request) {
+        try {
+          const { linkId, status } = await parseBody(request, updatePayPalLinkSchema);
+          return Response.json(await reconciliation.setLinkStatus(linkId, status));
+        } catch (error) {
+          return Response.json({ error: error instanceof Error ? error.message : "Unable to update PayPal match." }, { status: 400 });
         }
       },
     },

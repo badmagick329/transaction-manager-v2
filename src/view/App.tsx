@@ -23,6 +23,9 @@ type Transaction = {
   reconciliationLabel: string | null;
 };
 
+type Account = { id: number; name: string; currencyCode: string; sourceName: string | null; sourceId: number | null };
+type TransactionFilters = { sourceId: string; accountId: string; currencyCode: string; transactionType: string; description: string; minAmount: string; maxAmount: string; startDate: string; endDate: string };
+
 type PayPalPaymentLink = {
   id: number;
   status: "pending" | "confirmed" | "rejected";
@@ -117,9 +120,14 @@ function titleCase(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, character => character.toUpperCase());
 }
 
+function formatTransactionDate(transactionDate: string) {
+  return transactionDate.slice(0, 10);
+}
+
 export function App() {
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
   const [page, setPage] = useState<"dashboard" | "classification" | "reconciliation" | "transactions">("dashboard");
   const [dateRange, setDateRange] = useState(currentMonthRange);
   const [datePreset, setDatePreset] = useState<"month" | "last_30_days" | "last_90_days" | "year_to_date" | "custom">("month");
@@ -134,8 +142,11 @@ export function App() {
   const [hasMoreTransactions, setHasMoreTransactions] = useState(false);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [transactionFilter, setTransactionFilter] = useState<"all" | EconomicType>("all");
+  const [transactionFilters, setTransactionFilters] = useState<TransactionFilters>({ sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "" });
   const [visibleReviewGroupCount, setVisibleReviewGroupCount] = useState(classificationReviewPageSize);
   const remainingClassificationCount = reviewGroups.reduce((total, group) => total + group.transactionCount, 0);
+  const sources = [...new Map(accounts.filter(account => account.sourceId !== null).map(account => [account.sourceId!, account.sourceName ?? "Unknown source"])).entries()];
+  const currencies = [...new Set(accounts.map(account => account.currencyCode))].sort();
 
   const loadClassifications = async () => {
     const [reviewResponse, rulesResponse] = await Promise.all([
@@ -161,16 +172,32 @@ export function App() {
     setError(null);
   };
 
-  const loadTransactions = async (offset = 0, append = false, filter = transactionFilter) => {
+  const loadAccounts = async () => {
+    const response = await fetch("/api/accounts");
+    if (!response.ok) throw new Error("Unable to load accounts.");
+    setAccounts(await response.json());
+  };
+
+  const loadTransactions = async (offset = 0, append = false, filter = transactionFilter, filters = transactionFilters) => {
     setLoadingTransactions(true);
     try {
       const query = new URLSearchParams({ limit: String(transactionPageSize), offset: String(offset) });
       if (filter !== "all") query.set("economicType", filter);
+      if (filters.sourceId) query.set("sourceId", filters.sourceId);
+      if (filters.accountId) query.set("accountId", filters.accountId);
+      if (filters.currencyCode) query.set("currencyCode", filters.currencyCode);
+      if (filters.transactionType) query.set("transactionType", filters.transactionType);
+      if (filters.description.trim()) query.set("description", filters.description.trim());
+      if (filters.minAmount) query.set("minAmount", filters.minAmount);
+      if (filters.maxAmount) query.set("maxAmount", filters.maxAmount);
+      if (filters.startDate) query.set("startDate", filters.startDate);
+      if (filters.endDate) query.set("endDate", filters.endDate);
       const response = await fetch(`/api/transactions?${query}`);
       if (!response.ok) throw new Error("Unable to load transactions.");
       const page: Transaction[] = await response.json();
       setTransactions(current => append ? [...current, ...page] : page);
       setHasMoreTransactions(page.length === transactionPageSize);
+      setError(null);
     } finally {
       setLoadingTransactions(false);
     }
@@ -182,6 +209,7 @@ export function App() {
         const [importResponse] = await Promise.all([
           fetch("/api/imports/latest"),
           loadTransactions(),
+          loadAccounts(),
           loadClassifications(),
           loadPayPalLinks(),
         ]);
@@ -208,7 +236,7 @@ export function App() {
     void loadTransactions().catch(transactionError => {
       setError(transactionError instanceof Error ? transactionError.message : "Unable to load transactions.");
     });
-  }, [page, transactionFilter]);
+  }, [page, transactionFilter, transactionFilters]);
 
   const saveRule = async (input: { sourceId: number; description: string; direction: EconomicDirection; matchMode: ClassificationMatchMode; economicType: EconomicType }, key: string) => {
     setSavingKey(key);
@@ -527,14 +555,23 @@ export function App() {
               <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Transactions</p>
               <h2 className="mt-2 text-xl font-semibold">Newest first</h2>
             </div>
-            <div className="flex items-center gap-3">
-              <select className="rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilter} onChange={event => setTransactionFilter(event.target.value as "all" | EconomicType)}>
-                <option value="all">All economic types</option>
-                {economicTypeOptions.map(economicType => <option key={economicType} value={economicType}>{titleCase(economicType)}</option>)}
-              </select>
-              {!loading ? <p className="text-sm text-neutral-500">{transactions.length}{hasMoreTransactions ? "+" : ""} loaded</p> : null}
-            </div>
+            {!loading ? <p className="text-sm text-neutral-500">{transactions.length}{hasMoreTransactions ? "+" : ""} loaded</p> : null}
           </div>
+
+          <div className="mt-4 grid gap-3 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-xs text-neutral-400">Economic type<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilter} onChange={event => setTransactionFilter(event.target.value as "all" | EconomicType)}><option value="all">All economic types</option>{economicTypeOptions.map(economicType => <option key={economicType} value={economicType}>{titleCase(economicType)}</option>)}</select></label>
+            <label className="text-xs text-neutral-400">Provider<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.sourceId} onChange={event => setTransactionFilters(current => ({ ...current, sourceId: event.target.value, accountId: "" }))}><option value="">All providers</option>{sources.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
+            <label className="text-xs text-neutral-400">Account<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.accountId} onChange={event => setTransactionFilters(current => ({ ...current, accountId: event.target.value }))}><option value="">All accounts</option>{accounts.filter(account => !transactionFilters.sourceId || String(account.sourceId) === transactionFilters.sourceId).map(account => <option key={account.id} value={account.id}>{account.name} ({account.currencyCode})</option>)}</select></label>
+            <label className="text-xs text-neutral-400">Currency<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.currencyCode} onChange={event => setTransactionFilters(current => ({ ...current, currencyCode: event.target.value }))}><option value="">All currencies</option>{currencies.map(currency => <option key={currency} value={currency}>{currency}</option>)}</select></label>
+            <label className="text-xs text-neutral-400">Transaction type<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.transactionType} onChange={event => setTransactionFilters(current => ({ ...current, transactionType: event.target.value }))}><option value="">All types</option><option value="purchase">Purchase</option><option value="direct_debit">Direct debit</option><option value="transfer">Transfer</option><option value="funding">Funding</option><option value="withdrawal">Withdrawal</option><option value="card_payment">Card payment</option><option value="refund">Refund</option><option value="fee">Fee</option><option value="cashback">Cashback</option><option value="interest">Interest</option><option value="dividend">Dividend</option><option value="adjustment">Adjustment</option><option value="unclassified">Unclassified</option></select></label>
+            <label className="text-xs text-neutral-400">Description contains<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.description} onChange={event => setTransactionFilters(current => ({ ...current, description: event.target.value }))} placeholder="e.g. Spotify" /></label>
+            <label className="text-xs text-neutral-400">Amount at least<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="number" min="0" step="0.01" value={transactionFilters.minAmount} onChange={event => setTransactionFilters(current => ({ ...current, minAmount: event.target.value }))} placeholder="0.00" /></label>
+            <label className="text-xs text-neutral-400">Amount at most<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="number" min="0" step="0.01" value={transactionFilters.maxAmount} onChange={event => setTransactionFilters(current => ({ ...current, maxAmount: event.target.value }))} placeholder="0.00" /></label>
+            <div className="flex items-end"><button className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800" onClick={() => { setTransactionFilter("all"); setTransactionFilters({ sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "" }); }}>Clear filters</button></div>
+            <label className="text-xs text-neutral-400">From<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="date" value={transactionFilters.startDate} onChange={event => setTransactionFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
+            <label className="text-xs text-neutral-400">To<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="date" value={transactionFilters.endDate} onChange={event => setTransactionFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
+          </div>
+          <p className="mt-2 text-xs text-neutral-500">Amount filters use the absolute transaction amount, so they work for both money in and money out.</p>
 
           {!loading && transactions.length === 0 ? (
             <div className="mt-5 rounded-2xl border border-dashed border-neutral-800 p-8 text-sm text-neutral-400">
@@ -559,7 +596,7 @@ export function App() {
                 <tbody className="divide-y divide-neutral-800">
                   {transactions.map(transaction => (
                     <tr key={transaction.id} className="bg-neutral-950/30">
-                      <td className="whitespace-nowrap px-4 py-3 text-neutral-400">{transaction.transactionDate}</td>
+                      <td className="whitespace-nowrap px-4 py-3 text-neutral-400">{formatTransactionDate(transaction.transactionDate)}</td>
                       <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}</td>
                       <td className="px-4 py-3 text-neutral-400">{transaction.accountName}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.transactionType)}</td>

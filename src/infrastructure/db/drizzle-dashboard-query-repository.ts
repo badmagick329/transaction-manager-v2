@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, like, lte, lt, or, sql } from "drizzle-orm";
 import type {
   AccountListItem,
   CashFlowSourceBreakdown,
@@ -22,18 +22,21 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         kind: accounts.kind,
         currencyCode: accounts.currencyCode,
         sourceName: sources.name,
+        sourceId: sources.id,
       })
       .from(accounts)
       .leftJoin(sources, eq(accounts.sourceId, sources.id))
       .orderBy(accounts.name);
   }
 
-  async listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType }): Promise<TransactionListItem[]> {
+  async listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string }): Promise<TransactionListItem[]> {
     const query = this.db
       .select({
         id: transactions.id,
         accountId: accounts.id,
         accountName: accounts.name,
+        sourceId: sources.id,
+        sourceName: sources.name,
         transactionDate: transactions.transactionDate,
         postedDate: transactions.postedDate,
         description: transactions.description,
@@ -44,8 +47,21 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         status: transactions.status,
       })
       .from(transactions)
-      .innerJoin(accounts, eq(transactions.accountId, accounts.id));
-    const filteredQuery = options?.economicType ? query.where(eq(transactions.economicType, options.economicType)) : query;
+      .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+      .innerJoin(sources, eq(transactions.sourceId, sources.id));
+    const conditions = [
+      options?.economicType ? eq(transactions.economicType, options.economicType) : undefined,
+      options?.sourceId ? eq(transactions.sourceId, options.sourceId) : undefined,
+      options?.accountId ? eq(transactions.accountId, options.accountId) : undefined,
+      options?.currencyCode ? eq(transactions.currencyCode, options.currencyCode) : undefined,
+      options?.transactionType ? eq(transactions.transactionType, options.transactionType) : undefined,
+      options?.description ? like(transactions.description, `%${options.description}%`) : undefined,
+      options?.minAmountMinor !== undefined ? sql`abs(${transactions.amountMinor}) >= ${options.minAmountMinor}` : undefined,
+      options?.maxAmountMinor !== undefined ? sql`abs(${transactions.amountMinor}) <= ${options.maxAmountMinor}` : undefined,
+      options?.startDate ? gte(transactions.transactionDate, options.startDate) : undefined,
+      options?.endDate ? lte(transactions.transactionDate, `${options.endDate}T99`) : undefined,
+    ].filter(Boolean);
+    const filteredQuery = conditions.length > 0 ? query.where(and(...conditions)) : query;
     const orderedQuery = filteredQuery.orderBy(desc(transactions.transactionDate), desc(transactions.id));
     const transactionRows = options?.limit ? await orderedQuery.limit(options.limit).offset(options.offset ?? 0) : await orderedQuery;
     if (transactionRows.length === 0) return [];

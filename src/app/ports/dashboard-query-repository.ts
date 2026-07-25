@@ -4,12 +4,15 @@ export type AccountListItem = {
   kind: string;
   currencyCode: string;
   sourceName: string | null;
+  sourceId: number | null;
 };
 
 export type TransactionListItem = {
   id: number;
   accountId: number;
   accountName: string;
+  sourceId: number;
+  sourceName: string;
   transactionDate: string;
   postedDate: string | null;
   description: string;
@@ -55,8 +58,8 @@ export type CashFlowSummary = {
 
 export type DashboardQueryRepository = {
   listAccounts(): Promise<AccountListItem[]>;
-  listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType }): Promise<TransactionListItem[]>;
+  listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string }): Promise<TransactionListItem[]>;
   getLatestImport(): Promise<LatestImport>;
   getCashFlowSummary(range: { startDate: string; endDate: string }): Promise<CashFlowSummary[]>;
 };
-import type { EconomicType } from "../../core/finance/constants";
+import type { EconomicType, TransactionType } from "../../core/finance/constants";

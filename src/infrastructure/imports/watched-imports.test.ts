@@ -249,11 +249,13 @@ describe("watched bank imports", () => {
     const listedTransactions = await queries.listTransactions();
     const secondPage = await queries.listTransactions({ limit: 1, offset: 1 });
     const unclassifiedTransactions = await queries.listTransactions({ economicType: "unclassified" });
+    const filteredTransactions = await queries.listTransactions({ description: "newer", minAmountMinor: 400, maxAmountMinor: 500, startDate: "2026-06-02", endDate: "2026-06-02" });
 
     expect(latest).toMatchObject({ fileName: "statement.json", status: "processed", recordCount: 2 });
     expect(listedTransactions.map(transaction => transaction.description)).toEqual(["Newer", "Coffee shop"]);
     expect(secondPage.map(transaction => transaction.description)).toEqual(["Coffee shop"]);
     expect(unclassifiedTransactions).toHaveLength(2);
+    expect(filteredTransactions.map(transaction => transaction.description)).toEqual(["Newer"]);
   });
 
   test("summarizes cash flow by date range, currency, and source without counting transfers in net cash flow", async () => {

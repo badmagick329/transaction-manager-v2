@@ -2,6 +2,7 @@ import { and, desc, eq, gte, inArray, like, lte, lt, or, sql } from "drizzle-orm
 import type {
   AccountListItem,
   CashFlowSourceBreakdown,
+  CashFlowTrend,
   CashFlowSummary,
   DashboardQueryRepository,
   LatestImport,
@@ -10,6 +11,31 @@ import type {
 import type { EconomicType } from "../../core/finance/constants";
 import type { AppDatabase } from "./client";
 import { accounts, importBatches, sources, transactionLinks, transactions } from "./schema";
+
+function periodsInRange(startDate: string, endDate: string, granularity: "month" | "year") {
+  const startYear = Number(startDate.slice(0, 4));
+  const endYear = Number(endDate.slice(0, 4));
+  if (granularity === "year") return Array.from({ length: endYear - startYear + 1 }, (_, index) => String(startYear + index));
+
+  const periods: string[] = [];
+  let year = startYear;
+  let month = Number(startDate.slice(5, 7));
+  const endMonth = Number(endDate.slice(5, 7));
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    periods.push(`${year}-${String(month).padStart(2, "0")}`);
+    month += 1;
+    if (month === 13) {
+      month = 1;
+      year += 1;
+    }
+  }
+  return periods;
+}
+
+function periodLabel(period: string, granularity: "month" | "year") {
+  if (granularity === "year") return period;
+  return new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${period}-01T00:00:00Z`));
+}
 
 export class DrizzleDashboardQueryRepository implements DashboardQueryRepository {
   constructor(private readonly db: AppDatabase) {}
@@ -156,6 +182,58 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       transferOutflowMinor: summary.transferOutflowMinor,
       unclassifiedTransactionCount: summary.unclassifiedTransactionCount,
       sources: sourceBreakdownByCurrency.get(summary.currencyCode) ?? [],
+    }));
+  }
+
+  async getCashFlowTrend({ startDate, endDate, granularity }: { startDate: string; endDate: string; granularity: "month" | "year" }): Promise<CashFlowTrend[]> {
+    const endExclusive = new Date(`${endDate}T00:00:00Z`);
+    endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+    const periodExpression = granularity === "month"
+      ? sql<string>`substr(${transactions.transactionDate}, 1, 7)`
+      : sql<string>`substr(${transactions.transactionDate}, 1, 4)`;
+    const rows = await this.db
+      .select({
+        currencyCode: transactions.currencyCode,
+        period: periodExpression,
+        incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
+        expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
+        transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
+        transferOutflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} < 0 then ${transactions.amountMinor} else 0 end), 0)`,
+        unclassifiedTransactionCount: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'unclassified' then 1 else 0 end), 0)`,
+      })
+      .from(transactions)
+      .where(and(
+        gte(transactions.transactionDate, startDate),
+        lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)),
+        sql`not exists (select 1 from ${transactionLinks} where ${transactionLinks.fromTransactionId} = ${transactions.id} and ${transactionLinks.linkType} = 'funds' and ${transactionLinks.status} = 'confirmed')`,
+      ))
+      .groupBy(transactions.currencyCode, periodExpression)
+      .orderBy(transactions.currencyCode, periodExpression);
+
+    const periods = periodsInRange(startDate, endDate, granularity);
+    const rowsByCurrency = new Map<string, Map<string, typeof rows[number]>>();
+    for (const row of rows) {
+      const currencyRows = rowsByCurrency.get(row.currencyCode) ?? new Map<string, typeof row>();
+      currencyRows.set(row.period, row);
+      rowsByCurrency.set(row.currencyCode, currencyRows);
+    }
+    return [...rowsByCurrency.entries()].map(([currencyCode, currencyRows]) => ({
+      currencyCode,
+      periods: periods.map(period => {
+        const row = currencyRows.get(period);
+        const incomeMinor = row?.incomeMinor ?? 0;
+        const expenseMinor = row?.expenseMinor ?? 0;
+        return {
+          period,
+          label: periodLabel(period, granularity),
+          incomeMinor,
+          expenseMinor,
+          netCashFlowMinor: incomeMinor + expenseMinor,
+          transferInflowMinor: row?.transferInflowMinor ?? 0,
+          transferOutflowMinor: row?.transferOutflowMinor ?? 0,
+          unclassifiedTransactionCount: row?.unclassifiedTransactionCount ?? 0,
+        };
+      }),
     }));
   }
 }

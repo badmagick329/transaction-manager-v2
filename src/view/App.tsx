@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "../index.css";
 
 type LatestImport = {
@@ -79,6 +80,19 @@ type CashFlowSummary = {
   sources: CashFlowSourceBreakdown[];
 };
 
+type CashFlowPeriod = {
+  period: string;
+  label: string;
+  incomeMinor: number;
+  expenseMinor: number;
+  netCashFlowMinor: number;
+  transferInflowMinor: number;
+  transferOutflowMinor: number;
+  unclassifiedTransactionCount: number;
+};
+
+type CashFlowTrend = { currencyCode: string; periods: CashFlowPeriod[] };
+
 const economicTypeOptions: EconomicType[] = ["expense", "income", "transfer", "unclassified"];
 const matchModeOptions: ClassificationMatchMode[] = ["exact", "starts_with", "contains", "all"];
 const transactionPageSize = 100;
@@ -99,7 +113,12 @@ function currentMonthRange() {
   return { startDate: toDateInput(start), endDate: toDateInput(end) };
 }
 
-function presetDateRange(preset: "month" | "last_30_days" | "last_90_days" | "year_to_date") {
+function since2024Range() {
+  return { startDate: "2024-01-01", endDate: toDateInput(new Date()) };
+}
+
+function presetDateRange(preset: "since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date") {
+  if (preset === "since_2024") return since2024Range();
   if (preset === "month") return currentMonthRange();
   const end = new Date();
   const start = new Date(end);
@@ -116,6 +135,15 @@ function formatMoney(amountMinor: number, currencyCode: string) {
   }).format(amountMinor / 100);
 }
 
+function formatCompactMoney(amountMinor: number, currencyCode: string) {
+  return new Intl.NumberFormat(undefined, {
+    style: "currency",
+    currency: currencyCode,
+    notation: "compact",
+    maximumFractionDigits: 1,
+  }).format(amountMinor / 100);
+}
+
 function titleCase(value: string) {
   return value.replaceAll("_", " ").replace(/\b\w/g, character => character.toUpperCase());
 }
@@ -129,9 +157,11 @@ export function App() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [page, setPage] = useState<"dashboard" | "classification" | "reconciliation" | "transactions">("dashboard");
-  const [dateRange, setDateRange] = useState(currentMonthRange);
-  const [datePreset, setDatePreset] = useState<"month" | "last_30_days" | "last_90_days" | "year_to_date" | "custom">("month");
+  const [dateRange, setDateRange] = useState(since2024Range);
+  const [datePreset, setDatePreset] = useState<"since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date" | "custom">("since_2024");
   const [cashFlowSummary, setCashFlowSummary] = useState<CashFlowSummary[] | null>(null);
+  const [cashFlowTrend, setCashFlowTrend] = useState<CashFlowTrend[] | null>(null);
+  const [trendGranularity, setTrendGranularity] = useState<"month" | "year">("month");
   const [reviewGroups, setReviewGroups] = useState<ClassificationReviewGroup[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
   const [payPalLinks, setPayPalLinks] = useState<PayPalPaymentLink[]>([]);
@@ -169,6 +199,13 @@ export function App() {
     const response = await fetch(`/api/dashboard/cash-flow?start=${startDate}&end=${endDate}`);
     if (!response.ok) throw new Error("Unable to load cash flow.");
     setCashFlowSummary(await response.json());
+    setError(null);
+  };
+
+  const loadCashFlowTrend = async ({ startDate, endDate }: { startDate: string; endDate: string }, granularity = trendGranularity) => {
+    const response = await fetch(`/api/dashboard/cash-flow-over-time?start=${startDate}&end=${endDate}&granularity=${granularity}`);
+    if (!response.ok) throw new Error("Unable to load cash-flow trend.");
+    setCashFlowTrend(await response.json());
     setError(null);
   };
 
@@ -230,6 +267,12 @@ export function App() {
       setError(summaryError instanceof Error ? summaryError.message : "Unable to load cash flow.");
     });
   }, [dateRange]);
+
+  useEffect(() => {
+    void loadCashFlowTrend(dateRange).catch(trendError => {
+      setError(trendError instanceof Error ? trendError.message : "Unable to load cash-flow trend.");
+    });
+  }, [dateRange, trendGranularity]);
 
   useEffect(() => {
     if (page !== "transactions") return;
@@ -295,7 +338,7 @@ export function App() {
       });
       const responseBody = await response.json();
       if (!response.ok) throw new Error(responseBody.error ?? "Unable to update PayPal match.");
-      await Promise.all([loadPayPalLinks(), loadTransactions(), loadCashFlowSummary(dateRange)]);
+      await Promise.all([loadPayPalLinks(), loadTransactions(), loadCashFlowSummary(dateRange), loadCashFlowTrend(dateRange)]);
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Unable to update PayPal match.");
     } finally {
@@ -364,6 +407,7 @@ export function App() {
                     if (preset !== "custom") setDateRange(presetDateRange(preset));
                   }}
                 >
+                  <option value="since_2024">Since 2024</option>
                   <option value="month">This month</option>
                   <option value="last_30_days">Last 30 days</option>
                   <option value="last_90_days">Last 90 days</option>
@@ -407,6 +451,53 @@ export function App() {
                 <p className="mt-2 text-xs text-neutral-600">Transfer activity includes internal account movements and is not reconciled across accounts.</p>
               </div>
             ))}
+
+            <div className="mt-10 border-t border-neutral-800 pt-8">
+              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                <div>
+                  <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Cash flow over time</p>
+                  <h2 className="mt-2 text-xl font-semibold">Period-by-period view</h2>
+                  <p className="mt-1 text-sm text-neutral-400">Income and expenses are shown separately; transfers remain outside net cash flow.</p>
+                </div>
+                <div className="flex rounded-lg border border-neutral-700 p-1 text-sm">
+                  {(["month", "year"] as const).map(granularity => (
+                    <button key={granularity} className={`rounded-md px-3 py-1.5 ${trendGranularity === granularity ? "bg-neutral-100 text-neutral-950" : "text-neutral-300 hover:bg-neutral-900"}`} onClick={() => setTrendGranularity(granularity)}>{granularity === "month" ? "Monthly" : "Yearly"}</button>
+                  ))}
+                </div>
+              </div>
+              {cashFlowTrend === null ? <p className="mt-5 text-sm text-neutral-400">Loading cash-flow trend…</p> : null}
+              {cashFlowTrend?.map(trend => {
+                const chartData = trend.periods.map(period => ({ ...period, expenseDisplayMinor: Math.abs(period.expenseMinor) }));
+                const netLineColor = trend.periods.some(period => period.netCashFlowMinor < 0) ? "#fca5a5" : "#6ee7b7";
+                return (
+                  <div key={trend.currencyCode} className="mt-6">
+                    <p className="text-sm font-medium text-neutral-300">{trend.currencyCode}</p>
+                    <div className="mt-3 h-72 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4">
+                      <ResponsiveContainer width="100%" height="100%">
+                        <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                          <CartesianGrid stroke="#262626" vertical={false} />
+                          <XAxis dataKey="label" tick={{ fill: "#a3a3a3", fontSize: 12 }} axisLine={false} tickLine={false} />
+                          <YAxis tickFormatter={value => formatCompactMoney(Number(value), trend.currencyCode)} tick={{ fill: "#a3a3a3", fontSize: 12 }} axisLine={false} tickLine={false} width={72} />
+                          <Tooltip contentStyle={{ background: "#171717", border: "1px solid #404040", borderRadius: "0.5rem" }} labelStyle={{ color: "#f5f5f5" }} itemStyle={{ color: "#d4d4d4" }} formatter={(value, name) => [formatMoney(name === "Expenses" ? -Number(value) : Number(value), trend.currencyCode), name]} />
+                          <Legend wrapperStyle={{ fontSize: "0.75rem", color: "#d4d4d4" }} />
+                          <Bar dataKey="incomeMinor" name="Income" fill="#6ee7b7" radius={[4, 4, 0, 0]} />
+                          <Bar dataKey="expenseDisplayMinor" name="Expenses" fill="#fca5a5" radius={[4, 4, 0, 0]} />
+                          <Line type="monotone" dataKey="netCashFlowMinor" name="Net cash flow" stroke={netLineColor} strokeWidth={2} dot={{ r: 3 }} />
+                        </ComposedChart>
+                      </ResponsiveContainer>
+                    </div>
+                    <div className="mt-4 overflow-x-auto rounded-2xl border border-neutral-800">
+                      <table className="w-full min-w-[560px] text-left text-sm">
+                        <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500"><tr><th className="px-4 py-3 font-medium">{trendGranularity === "month" ? "Month" : "Year"}</th><th className="px-4 py-3 text-right font-medium">Income</th><th className="px-4 py-3 text-right font-medium">Expenses</th><th className="px-4 py-3 text-right font-medium">Net cash flow</th></tr></thead>
+                        <tbody className="divide-y divide-neutral-800">
+                          {trend.periods.map(period => <tr key={period.period} className="bg-neutral-950/30"><td className="px-4 py-3 text-neutral-100">{period.label}</td><td className="px-4 py-3 text-right text-emerald-300">{formatMoney(period.incomeMinor, trend.currencyCode)}</td><td className="px-4 py-3 text-right text-red-300">{formatMoney(Math.abs(period.expenseMinor), trend.currencyCode)}</td><td className={`px-4 py-3 text-right ${period.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(period.netCashFlowMinor, trend.currencyCode)}</td></tr>)}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </section>
         ) : null}
 

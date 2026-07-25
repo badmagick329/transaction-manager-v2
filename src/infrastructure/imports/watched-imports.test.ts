@@ -188,8 +188,10 @@ describe("watched bank imports", () => {
 
     const dashboard = createDashboardQueries(new DrizzleDashboardQueryRepository(db));
     expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-5998);
+    expect((await dashboard.getCashFlowTrend({ startDate: "2026-02-01", endDate: "2026-02-28", granularity: "month" }))[0]?.periods[0]?.expenseMinor).toBe(-5998);
     await reconciliation.setPayPalPaymentLinkStatus(link!.id, "confirmed");
     expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-2999);
+    expect((await dashboard.getCashFlowTrend({ startDate: "2026-02-01", endDate: "2026-02-28", granularity: "month" }))[0]?.periods[0]?.expenseMinor).toBe(-2999);
     await reconciliation.setPayPalPaymentLinkStatus(link!.id, "rejected");
     expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-5998);
     await reconciliation.setPayPalPaymentLinkStatus(link!.id, "pending");
@@ -310,6 +312,49 @@ describe("watched bank imports", () => {
         sources: [{ sourceName: "Robinhood", incomeMinor: 125, expenseMinor: 0, netCashFlowMinor: 125, transferInflowMinor: 0, transferOutflowMinor: 0 }],
       },
     ]);
+  });
+
+  test("summarizes monthly and yearly cash-flow trends with zero periods and separate currencies", async () => {
+    const { db, repository } = await createTestContext();
+    await importStandardFile(repository, {
+      fileName: "trend-gbp.json",
+      fileHash: "trend-gbp",
+      importFile: importFile([
+        record({ externalId: "jan-income", description: "Salary", amountMinor: 1000, transactionDate: "2026-01-31T23:59:59Z", rawPayload: { row: "1" } }),
+        record({ externalId: "mar-expense", description: "Groceries", amountMinor: -400, transactionDate: "2026-03-01", rawPayload: { row: "2" } }),
+      ]),
+    });
+    const usdImport = importFile([record({ externalId: "usd-income", description: "Dividend", amountMinor: 125, currencyCode: "USD", transactionDate: "2026-01-15", rawPayload: { row: "3" } })]);
+    usdImport.source = { ...usdImport.source, slug: "robinhood", name: "Robinhood", kind: "robinhood" as const, account: { externalId: "rh-account", name: "Robinhood", currencyCode: "USD" } };
+    await importStandardFile(repository, { fileName: "trend-usd.json", fileHash: "trend-usd", importFile: usdImport });
+    const classifications = new DrizzleClassificationRepository(db);
+    const [lloyds, robinhood] = await db.select().from(sources);
+    await classifications.saveRule({ sourceId: lloyds!.id, description: "Salary", matchMode: "exact", direction: "inflow", economicType: "income" });
+    await classifications.saveRule({ sourceId: lloyds!.id, description: "Groceries", matchMode: "exact", direction: "outflow", economicType: "expense" });
+    await classifications.saveRule({ sourceId: robinhood!.id, description: "Dividend", matchMode: "exact", direction: "inflow", economicType: "income" });
+
+    const dashboard = createDashboardQueries(new DrizzleDashboardQueryRepository(db));
+    expect(await dashboard.getCashFlowTrend({ startDate: "2026-01-01", endDate: "2026-03-31", granularity: "month" })).toEqual([
+      {
+        currencyCode: "GBP",
+        periods: expect.arrayContaining([
+          expect.objectContaining({ period: "2026-01", incomeMinor: 1000, expenseMinor: 0, netCashFlowMinor: 1000 }),
+          expect.objectContaining({ period: "2026-02", incomeMinor: 0, expenseMinor: 0, netCashFlowMinor: 0 }),
+          expect.objectContaining({ period: "2026-03", incomeMinor: 0, expenseMinor: -400, netCashFlowMinor: -400 }),
+        ]),
+      },
+      {
+        currencyCode: "USD",
+        periods: expect.arrayContaining([
+          expect.objectContaining({ period: "2026-01", incomeMinor: 125 }),
+          expect.objectContaining({ period: "2026-02", incomeMinor: 0 }),
+          expect.objectContaining({ period: "2026-03", incomeMinor: 0 }),
+        ]),
+      },
+    ]);
+    expect(await dashboard.getCashFlowTrend({ startDate: "2025-01-01", endDate: "2026-12-31", granularity: "year" })).toEqual(expect.arrayContaining([
+      expect.objectContaining({ currencyCode: "GBP", periods: [expect.objectContaining({ period: "2025", netCashFlowMinor: 0 }), expect.objectContaining({ period: "2026", netCashFlowMinor: 600 })] }),
+    ]));
   });
 
   test("moves invalid files to failed without raw or transaction rows", async () => {

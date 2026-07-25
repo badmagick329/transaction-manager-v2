@@ -101,6 +101,19 @@ export function createHttpRoutes({ queries, classifications, reconciliation, ind
       },
     },
 
+    "/api/dashboard/cash-flow-over-time": {
+      async GET(request: Request) {
+        const url = new URL(request.url);
+        const startDate = url.searchParams.get("start");
+        const endDate = url.searchParams.get("end");
+        const granularity = url.searchParams.get("granularity");
+        if (!startDate || !endDate || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(startDate) || !/^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(endDate) || startDate > endDate || (granularity !== "month" && granularity !== "year")) {
+          return Response.json({ error: "start and end must use YYYY-MM-DD, start must not be after end, and granularity must be month or year." }, { status: 400 });
+        }
+        return Response.json(await queries.getCashFlowTrend({ startDate, endDate, granularity }));
+      },
+    },
+
     "/api/classification/review": {
       async GET() {
         return Response.json(await classifications.listReviewGroups());

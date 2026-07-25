@@ -98,6 +98,31 @@ describe("watched bank imports", () => {
     expect((await db.select().from(transactions))[0]).toMatchObject({ description: "Card purchase", amountMinor: -450 });
   });
 
+  test("imports PayPal records into separate currency balance accounts", async () => {
+    const { db, repository } = await createTestContext();
+    const paypalImport = {
+      source: {
+        slug: "paypal",
+        name: "PayPal",
+        kind: "paypal" as const,
+        fileName: "activity.csv",
+        account: null,
+      },
+      records: [
+        record({ externalId: "paypal-gbp", description: "Spotify AB", amountMinor: -1799, transactionType: "purchase", account: { externalId: null, name: "PayPal GBP balance", currencyCode: "GBP" } }),
+        record({ externalId: "paypal-usd", description: "PayPal Inc.", amountMinor: 105, transactionType: null, rawPayload: { row: "2" }, account: { externalId: null, name: "PayPal USD balance", currencyCode: "USD" } }),
+      ],
+    };
+
+    await importStandardFile(repository, { fileName: "2026-01-09_2026-06-08_PayPal.json", fileHash: "paypal-file", importFile: paypalImport });
+
+    expect(await db.select().from(accounts)).toEqual(expect.arrayContaining([
+      expect.objectContaining({ name: "PayPal GBP balance", kind: "bank_account", currencyCode: "GBP" }),
+      expect.objectContaining({ name: "PayPal USD balance", kind: "bank_account", currencyCode: "USD" }),
+    ]));
+    expect((await db.select().from(transactions)).map(transaction => transaction.transactionType)).toEqual(["purchase", "unclassified"]);
+  });
+
   test("imports Robinhood records into an investment portfolio account", async () => {
     const { db, repository } = await createTestContext();
     const robinhoodImport = importFile([record({ externalId: "robinhood-1", description: "Instant bank deposit", amountMinor: 64546, currencyCode: "USD", transactionType: "funding" })]);

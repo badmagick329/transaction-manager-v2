@@ -31,8 +31,8 @@ export class DrizzleImportRepository implements ImportRepository {
   }
 
   async importFile(input: ProcessedImportFile): Promise<ImportBatchSummary> {
-    if (input.importFile.source.kind !== "bank" && input.importFile.source.kind !== "credit_card" && input.importFile.source.kind !== "robinhood" && input.importFile.source.kind !== "trading212") {
-      throw new Error("Only bank, credit-card, Robinhood, and Trading 212 imports are supported in this version.");
+    if (input.importFile.source.kind !== "bank" && input.importFile.source.kind !== "credit_card" && input.importFile.source.kind !== "paypal" && input.importFile.source.kind !== "robinhood" && input.importFile.source.kind !== "trading212") {
+      throw new Error("Only bank, credit-card, PayPal, Robinhood, and Trading 212 imports are supported in this version.");
     }
 
     return this.db.transaction(async tx => {

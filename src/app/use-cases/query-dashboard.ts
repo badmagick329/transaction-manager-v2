@@ -4,7 +4,8 @@ import type { DashboardQueryRepository } from "../ports/dashboard-query-reposito
 export function createDashboardQueries(repository: DashboardQueryRepository) {
   return {
     listAccounts: () => repository.listAccounts(),
-    listTransactions: (options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string }) => repository.listTransactions(options),
+    listTransactions: (options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }) => repository.listTransactions(options),
+    summarizeTransactions: (options?: { economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }) => repository.summarizeTransactions(options),
     getLatestImport: () => repository.getLatestImport(),
     getCashFlowSummary: (range: { startDate: string; endDate: string }) => repository.getCashFlowSummary(range),
     getCashFlowTrend: (range: { startDate: string; endDate: string; granularity: "month" | "year" }) => repository.getCashFlowTrend(range),

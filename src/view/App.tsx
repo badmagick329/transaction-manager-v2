@@ -24,8 +24,10 @@ type Transaction = {
   reconciliationLabel: string | null;
 };
 
+type TransactionSummary = { currencyCode: string; transactionCount: number; receivedMinor: number; spentMinor: number; netMinor: number };
+
 type Account = { id: number; name: string; currencyCode: string; sourceName: string | null; sourceId: number | null };
-type TransactionFilters = { sourceId: string; accountId: string; currencyCode: string; transactionType: string; description: string; minAmount: string; maxAmount: string; startDate: string; endDate: string };
+type TransactionFilters = { sourceId: string; accountId: string; currencyCode: string; transactionType: string; description: string; minAmount: string; maxAmount: string; startDate: string; endDate: string; hideTrading212InterestCashbackAndDividends: boolean; hideTransfers: boolean };
 
 type PayPalPaymentLink = {
   id: number;
@@ -155,6 +157,7 @@ function formatTransactionDate(transactionDate: string) {
 export function App() {
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactionSummary, setTransactionSummary] = useState<TransactionSummary[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [page, setPage] = useState<"dashboard" | "classification" | "reconciliation" | "transactions">("dashboard");
   const [dateRange, setDateRange] = useState(since2024Range);
@@ -172,7 +175,7 @@ export function App() {
   const [hasMoreTransactions, setHasMoreTransactions] = useState(false);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [transactionFilter, setTransactionFilter] = useState<"all" | EconomicType>("all");
-  const [transactionFilters, setTransactionFilters] = useState<TransactionFilters>({ sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "" });
+  const [transactionFilters, setTransactionFilters] = useState<TransactionFilters>({ sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "", hideTrading212InterestCashbackAndDividends: false, hideTransfers: false });
   const [visibleReviewGroupCount, setVisibleReviewGroupCount] = useState(classificationReviewPageSize);
   const remainingClassificationCount = reviewGroups.reduce((total, group) => total + group.transactionCount, 0);
   const sources = [...new Map(accounts.filter(account => account.sourceId !== null).map(account => [account.sourceId!, account.sourceName ?? "Unknown source"])).entries()];
@@ -229,10 +232,17 @@ export function App() {
       if (filters.maxAmount) query.set("maxAmount", filters.maxAmount);
       if (filters.startDate) query.set("startDate", filters.startDate);
       if (filters.endDate) query.set("endDate", filters.endDate);
-      const response = await fetch(`/api/transactions?${query}`);
+      if (filters.hideTrading212InterestCashbackAndDividends) query.set("hideTrading212InterestCashbackAndDividends", "true");
+      if (filters.hideTransfers) query.set("hideTransfers", "true");
+      const [response, summaryResponse] = await Promise.all([
+        fetch(`/api/transactions?${query}`),
+        append ? Promise.resolve(null) : fetch(`/api/transactions/summary?${query}`),
+      ]);
       if (!response.ok) throw new Error("Unable to load transactions.");
+      if (summaryResponse && !summaryResponse.ok) throw new Error("Unable to load transaction summary.");
       const page: Transaction[] = await response.json();
       setTransactions(current => append ? [...current, ...page] : page);
+      if (summaryResponse) setTransactionSummary(await summaryResponse.json());
       setHasMoreTransactions(page.length === transactionPageSize);
       setError(null);
     } finally {
@@ -658,11 +668,15 @@ export function App() {
             <label className="text-xs text-neutral-400">Description contains<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.description} onChange={event => setTransactionFilters(current => ({ ...current, description: event.target.value }))} placeholder="e.g. Spotify" /></label>
             <label className="text-xs text-neutral-400">Amount at least<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="number" min="0" step="0.01" value={transactionFilters.minAmount} onChange={event => setTransactionFilters(current => ({ ...current, minAmount: event.target.value }))} placeholder="0.00" /></label>
             <label className="text-xs text-neutral-400">Amount at most<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="number" min="0" step="0.01" value={transactionFilters.maxAmount} onChange={event => setTransactionFilters(current => ({ ...current, maxAmount: event.target.value }))} placeholder="0.00" /></label>
-            <div className="flex items-end"><button className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800" onClick={() => { setTransactionFilter("all"); setTransactionFilters({ sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "" }); }}>Clear filters</button></div>
+            <label className="flex items-end gap-2 text-sm text-neutral-300"><input type="checkbox" checked={transactionFilters.hideTrading212InterestCashbackAndDividends} onChange={event => setTransactionFilters(current => ({ ...current, hideTrading212InterestCashbackAndDividends: event.target.checked }))} />Hide Trading 212 interest, cashback, and dividends</label>
+            <label className="flex items-end gap-2 text-sm text-neutral-300"><input type="checkbox" checked={transactionFilters.hideTransfers} onChange={event => setTransactionFilters(current => ({ ...current, hideTransfers: event.target.checked }))} />Hide transfers</label>
+            <div className="flex items-end"><button className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800" onClick={() => { setTransactionFilter("all"); setTransactionFilters({ sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "", hideTrading212InterestCashbackAndDividends: false, hideTransfers: false }); }}>Clear filters</button></div>
             <label className="text-xs text-neutral-400">From<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="date" value={transactionFilters.startDate} onChange={event => setTransactionFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
             <label className="text-xs text-neutral-400">To<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="date" value={transactionFilters.endDate} onChange={event => setTransactionFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
           </div>
           <p className="mt-2 text-xs text-neutral-500">Amount filters use the absolute transaction amount, so they work for both money in and money out.</p>
+
+          {transactionSummary.length > 0 ? <div className="mt-4 flex flex-wrap gap-3">{transactionSummary.map(summary => <div key={summary.currencyCode} className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 text-sm"><p className="text-xs uppercase tracking-wide text-neutral-500">Filtered total · {summary.transactionCount} transactions · {summary.currencyCode}</p><p className="mt-1 text-neutral-200">Received <span className="font-medium text-emerald-300">{formatMoney(summary.receivedMinor, summary.currencyCode)}</span> · Spent <span className="font-medium text-red-300">{formatMoney(summary.spentMinor, summary.currencyCode)}</span> · Net <span className={summary.netMinor < 0 ? "font-medium text-red-300" : "font-medium text-emerald-300"}>{formatMoney(summary.netMinor, summary.currencyCode)}</span></p></div>)}</div> : null}
 
           {!loading && transactions.length === 0 ? (
             <div className="mt-5 rounded-2xl border border-dashed border-neutral-800 p-8 text-sm text-neutral-400">

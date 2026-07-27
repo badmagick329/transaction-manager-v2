@@ -7,6 +7,7 @@ import type {
   DashboardQueryRepository,
   LatestImport,
   TransactionListItem,
+  TransactionSummary,
 } from "../../app/ports/dashboard-query-repository";
 import type { EconomicType } from "../../core/finance/constants";
 import type { AppDatabase } from "./client";
@@ -55,7 +56,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .orderBy(accounts.name);
   }
 
-  async listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string }): Promise<TransactionListItem[]> {
+  async listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }): Promise<TransactionListItem[]> {
     const query = this.db
       .select({
         id: transactions.id,
@@ -86,6 +87,8 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       options?.maxAmountMinor !== undefined ? sql`abs(${transactions.amountMinor}) <= ${options.maxAmountMinor}` : undefined,
       options?.startDate ? gte(transactions.transactionDate, options.startDate) : undefined,
       options?.endDate ? lte(transactions.transactionDate, `${options.endDate}T99`) : undefined,
+      options?.hideTrading212InterestCashbackAndDividends ? sql`not (${sources.slug} = 'trading212' and ${transactions.transactionType} in ('interest', 'cashback', 'dividend'))` : undefined,
+      options?.hideTransfers ? sql`${transactions.economicType} <> 'transfer'` : undefined,
     ].filter(Boolean);
     const filteredQuery = conditions.length > 0 ? query.where(and(...conditions)) : query;
     const orderedQuery = filteredQuery.orderBy(desc(transactions.transactionDate), desc(transactions.id));
@@ -105,6 +108,36 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         : toLink ? toLink.status === "confirmed" ? "Funded by HSBC PayPal payment" : "HSBC match pending" : null;
       return { ...transaction, reconciliationLabel };
     });
+  }
+
+  async summarizeTransactions(options?: { economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }): Promise<TransactionSummary[]> {
+    const query = this.db
+      .select({
+        currencyCode: transactions.currencyCode,
+        transactionCount: sql<number>`count(*)`,
+        receivedMinor: sql<number>`coalesce(sum(case when ${transactions.amountMinor} > 0 then ${transactions.amountMinor} else 0 end), 0)`,
+        spentMinor: sql<number>`coalesce(sum(case when ${transactions.amountMinor} < 0 then -${transactions.amountMinor} else 0 end), 0)`,
+        netMinor: sql<number>`coalesce(sum(${transactions.amountMinor}), 0)`,
+      })
+      .from(transactions)
+      .innerJoin(accounts, eq(transactions.accountId, accounts.id))
+      .innerJoin(sources, eq(transactions.sourceId, sources.id));
+    const conditions = [
+      options?.economicType ? eq(transactions.economicType, options.economicType) : undefined,
+      options?.sourceId ? eq(transactions.sourceId, options.sourceId) : undefined,
+      options?.accountId ? eq(transactions.accountId, options.accountId) : undefined,
+      options?.currencyCode ? eq(transactions.currencyCode, options.currencyCode) : undefined,
+      options?.transactionType ? eq(transactions.transactionType, options.transactionType) : undefined,
+      options?.description ? like(transactions.description, `%${options.description}%`) : undefined,
+      options?.minAmountMinor !== undefined ? sql`abs(${transactions.amountMinor}) >= ${options.minAmountMinor}` : undefined,
+      options?.maxAmountMinor !== undefined ? sql`abs(${transactions.amountMinor}) <= ${options.maxAmountMinor}` : undefined,
+      options?.startDate ? gte(transactions.transactionDate, options.startDate) : undefined,
+      options?.endDate ? lte(transactions.transactionDate, `${options.endDate}T99`) : undefined,
+      options?.hideTrading212InterestCashbackAndDividends ? sql`not (${sources.slug} = 'trading212' and ${transactions.transactionType} in ('interest', 'cashback', 'dividend'))` : undefined,
+      options?.hideTransfers ? sql`${transactions.economicType} <> 'transfer'` : undefined,
+    ].filter(Boolean);
+    const filteredQuery = conditions.length > 0 ? query.where(and(...conditions)) : query;
+    return filteredQuery.groupBy(transactions.currencyCode).orderBy(transactions.currencyCode);
   }
 
   async getLatestImport(): Promise<LatestImport> {

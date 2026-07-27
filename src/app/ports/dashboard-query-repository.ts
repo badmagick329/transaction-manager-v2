@@ -24,6 +24,14 @@ export type TransactionListItem = {
   reconciliationLabel: string | null;
 };
 
+export type TransactionSummary = {
+  currencyCode: string;
+  transactionCount: number;
+  receivedMinor: number;
+  spentMinor: number;
+  netMinor: number;
+};
+
 export type LatestImport = {
   id: number;
   fileName: string;
@@ -74,7 +82,8 @@ export type CashFlowTrend = {
 
 export type DashboardQueryRepository = {
   listAccounts(): Promise<AccountListItem[]>;
-  listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string }): Promise<TransactionListItem[]>;
+  listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }): Promise<TransactionListItem[]>;
+  summarizeTransactions(options?: { economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }): Promise<TransactionSummary[]>;
   getLatestImport(): Promise<LatestImport>;
   getCashFlowSummary(range: { startDate: string; endDate: string }): Promise<CashFlowSummary[]>;
   getCashFlowTrend(range: { startDate: string; endDate: string; granularity: "month" | "year" }): Promise<CashFlowTrend[]>;

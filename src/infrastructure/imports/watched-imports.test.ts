@@ -151,8 +151,10 @@ describe("watched bank imports", () => {
         account: null,
       },
       records: [
-        record({ externalId: "invest-card", description: "Card purchase", amountMinor: -2893, transactionType: "purchase", account: { externalId: "42368553", name: "Trading 212 Invest", currencyCode: "GBP" } }),
-        record({ externalId: "isa-deposit", description: "TrueLayer", amountMinor: 10000, transactionType: "funding", rawPayload: { row: "2" }, account: { externalId: "42367172", name: "Trading 212 Stocks ISA", currencyCode: "GBP" } }),
+        record({ externalId: "invest-card", description: "Dunelm", amountMinor: -2893, transactionType: "purchase", account: { externalId: "42368553", name: "Trading 212 Invest", currencyCode: "GBP" } }),
+        record({ externalId: "invest-refund", description: "Dunelm", amountMinor: 2893, transactionType: "refund", rawPayload: { row: "2" }, account: { externalId: "42368553", name: "Trading 212 Invest", currencyCode: "GBP" } }),
+        record({ externalId: "cashback-reversal", description: "Spending cashback", amountMinor: -112, transactionType: "cashback", rawPayload: { row: "3" }, account: { externalId: "42368553", name: "Trading 212 Invest", currencyCode: "GBP" } }),
+        record({ externalId: "isa-deposit", description: "TrueLayer", amountMinor: 10000, transactionType: "funding", rawPayload: { row: "4" }, account: { externalId: "42367172", name: "Trading 212 Stocks ISA", currencyCode: "GBP" } }),
       ],
     };
 
@@ -161,7 +163,7 @@ describe("watched bank imports", () => {
       expect.objectContaining({ name: "Trading 212 Invest", kind: "investment_portfolio" }),
       expect.objectContaining({ name: "Trading 212 Stocks ISA", kind: "investment_portfolio" }),
     ]));
-    expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["expense", "transfer"]);
+    expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["expense", "income", "expense", "transfer"]);
   });
 
   test("proposes PayPal funding matches and excludes only confirmed HSBC duplicates from cash flow", async () => {
@@ -252,12 +254,14 @@ describe("watched bank imports", () => {
     const secondPage = await queries.listTransactions({ limit: 1, offset: 1 });
     const unclassifiedTransactions = await queries.listTransactions({ economicType: "unclassified" });
     const filteredTransactions = await queries.listTransactions({ description: "newer", minAmountMinor: 400, maxAmountMinor: 500, startDate: "2026-06-02", endDate: "2026-06-02" });
+    const filteredSummary = await queries.summarizeTransactions({ description: "newer", minAmountMinor: 400, maxAmountMinor: 500, startDate: "2026-06-02", endDate: "2026-06-02" });
 
     expect(latest).toMatchObject({ fileName: "statement.json", status: "processed", recordCount: 2 });
     expect(listedTransactions.map(transaction => transaction.description)).toEqual(["Newer", "Coffee shop"]);
     expect(secondPage.map(transaction => transaction.description)).toEqual(["Coffee shop"]);
     expect(unclassifiedTransactions).toHaveLength(2);
     expect(filteredTransactions.map(transaction => transaction.description)).toEqual(["Newer"]);
+    expect(filteredSummary).toEqual([{ currencyCode: "GBP", transactionCount: 1, receivedMinor: 0, spentMinor: 450, netMinor: -450 }]);
   });
 
   test("summarizes cash flow by date range, currency, and source without counting transfers in net cash flow", async () => {

@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { descriptionMatchesRule, economicDirectionForAmount, normalizeDescription, ruleMatchPriority } from "../../app/classification";
+import { automaticEconomicType, descriptionMatchesRule, economicDirectionForAmount, normalizeDescription, ruleMatchPriority } from "../../app/classification";
 import type { ImportBatchSummary, ImportRepository, ProcessedImportFile, ResolvedImportRecord } from "../../app/ports/import-repository";
 import { createSourceRecordHash, resolveImportRecordAccounts } from "../../app/use-cases/import-standard-file";
 import type { AppDatabase } from "./client";
@@ -138,7 +138,7 @@ export class DrizzleImportRepository implements ImportRepository {
       const existingSourceRecordHashes = await this.findExistingSourceRecordHashes(tx, source.id, recordsWithHashes.map(item => item.sourceRecordHash));
       let duplicateRecordCount = 0;
       const seenSourceRecordHashes = new Set(existingSourceRecordHashes);
-      const newRecords = [] as Array<{ record: ResolvedImportRecord; sourceRecordHash: string; accountId: number; classificationRule: typeof classificationRules.$inferSelect | undefined }>;
+      const newRecords = [] as Array<{ record: ResolvedImportRecord; sourceRecordHash: string; accountId: number; classificationRule: typeof classificationRules.$inferSelect | undefined; economicType: typeof transactions.$inferInsert.economicType }>;
       for (const { record, sourceRecordHash } of recordsWithHashes) {
         if (seenSourceRecordHashes.has(sourceRecordHash)) {
           duplicateRecordCount += 1;
@@ -148,7 +148,7 @@ export class DrizzleImportRepository implements ImportRepository {
         const account = accountsByKey.get(accountKey(record.account));
         if (!account) throw new Error(`Unable to resolve account for ${record.description}.`);
         const direction = economicDirectionForAmount(record.amountMinor);
-        const classificationRule = sourceRules
+        const matchingRules = sourceRules
           .filter(rule => rule.direction === direction)
           .filter(rule => descriptionMatchesRule(record.description, rule.normalizedDescription, rule.matchMode))
           .sort(
@@ -156,8 +156,12 @@ export class DrizzleImportRepository implements ImportRepository {
               ruleMatchPriority(right.matchMode) - ruleMatchPriority(left.matchMode) ||
               right.normalizedDescription.length - left.normalizedDescription.length ||
               right.id - left.id,
-          )[0];
-        newRecords.push({ record, sourceRecordHash, accountId: account.id, classificationRule });
+          );
+        const classificationRule = matchingRules[0];
+        const specificRule = matchingRules.find(rule => rule.matchMode !== "all");
+        const automaticType = automaticEconomicType(source.slug, record.transactionType ?? "unclassified", record.amountMinor);
+        const economicType = specificRule?.economicType ?? automaticType ?? classificationRule?.economicType ?? "unclassified";
+        newRecords.push({ record, sourceRecordHash, accountId: account.id, classificationRule: specificRule ?? (automaticType ? undefined : classificationRule), economicType });
       }
 
       for (const recordsBatch of inBatches(newRecords)) {
@@ -173,14 +177,14 @@ export class DrizzleImportRepository implements ImportRepository {
           })))
           .returning({ id: rawRecords.id, sourceRecordHash: rawRecords.sourceRecordHash });
         const rawRecordIdsByHash = new Map(insertedRawRecords.map(rawRecord => [rawRecord.sourceRecordHash, rawRecord.id]));
-        await tx.insert(transactions).values(recordsBatch.map(({ record, sourceRecordHash, accountId, classificationRule }) => ({
+        await tx.insert(transactions).values(recordsBatch.map(({ record, sourceRecordHash, accountId, economicType }) => ({
           sourceId: source.id,
           accountId,
           rawRecordId: rawRecordIdsByHash.get(sourceRecordHash),
           externalId: record.externalId ?? null,
           sourceTransactionHash: sourceRecordHash,
           transactionType: record.transactionType ?? "unclassified",
-          economicType: classificationRule?.economicType ?? "unclassified",
+          economicType,
           status: record.status,
           amountMinor: record.amountMinor,
           currencyCode: record.currencyCode,
@@ -196,14 +200,14 @@ export class DrizzleImportRepository implements ImportRepository {
           .from(transactions)
           .where(and(eq(transactions.sourceId, source.id), inArray(transactions.sourceTransactionHash, recordsBatch.map(item => item.sourceRecordHash))));
         const transactionIdsByHash = new Map(transactionRows.map(transaction => [transaction.sourceTransactionHash, transaction.id]));
-        const audits = recordsBatch.flatMap(({ sourceRecordHash, classificationRule }) => {
+        const audits = recordsBatch.flatMap(({ sourceRecordHash, classificationRule, economicType }) => {
           const transactionId = transactionIdsByHash.get(sourceRecordHash);
-          return classificationRule && transactionId ? [{
+          return economicType !== "unclassified" && transactionId ? [{
             transactionId,
-            classificationRuleId: classificationRule.id,
+            classificationRuleId: classificationRule?.id ?? null,
             previousEconomicType: "unclassified" as const,
-            newEconomicType: classificationRule.economicType,
-            reason: "rule_applied_on_import",
+            newEconomicType: economicType,
+            reason: classificationRule ? "rule_applied_on_import" : "source_type_default_on_import",
             createdAt: timestamp,
           }] : [];
         });
@@ -311,6 +315,8 @@ export class DrizzleImportRepository implements ImportRepository {
       { sourceId, normalizedDescription: "*", matchMode: "all", direction: "outflow", economicType: "transfer", createdAt: timestamp, updatedAt: timestamp },
       { sourceId, normalizedDescription: normalizeDescription("Card purchase"), matchMode: "starts_with", direction: "outflow", economicType: "expense", createdAt: timestamp, updatedAt: timestamp },
       { sourceId, normalizedDescription: normalizeDescription("Card cashback"), matchMode: "starts_with", direction: "inflow", economicType: "income", createdAt: timestamp, updatedAt: timestamp },
+      { sourceId, normalizedDescription: normalizeDescription("Spending cashback"), matchMode: "starts_with", direction: "inflow", economicType: "income", createdAt: timestamp, updatedAt: timestamp },
+      { sourceId, normalizedDescription: normalizeDescription("Spending cashback"), matchMode: "starts_with", direction: "outflow", economicType: "expense", createdAt: timestamp, updatedAt: timestamp },
     ]);
   }
 

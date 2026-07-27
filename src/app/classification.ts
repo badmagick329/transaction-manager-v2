@@ -33,3 +33,10 @@ export function descriptionMatchesRule(description: string, matchValue: string, 
 export function ruleMatchPriority(matchMode: ClassificationMatchMode) {
   return matchMode === "exact" ? 4 : matchMode === "starts_with" ? 3 : matchMode === "contains" ? 2 : 1;
 }
+
+export function automaticEconomicType(sourceSlug: string, transactionType: string, amountMinor: number): EconomicType | undefined {
+  if (sourceSlug !== "trading212") return undefined;
+  if (transactionType === "purchase" && amountMinor < 0) return "expense";
+  if (transactionType === "refund" && amountMinor > 0) return "income";
+  return undefined;
+}

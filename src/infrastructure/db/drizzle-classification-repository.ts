@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray } from "drizzle-orm";
-import { descriptionMatchesRule, economicDirectionForAmount, isEconomicTypeAllowedForDirection, normalizeDescription, ruleMatchPriority } from "../../app/classification";
+import { automaticEconomicType, descriptionMatchesRule, economicDirectionForAmount, isEconomicTypeAllowedForDirection, normalizeDescription, ruleMatchPriority } from "../../app/classification";
 import type {
   ClassificationRepository,
   ClassificationReviewGroup,
@@ -145,10 +145,12 @@ export class DrizzleClassificationRepository implements ClassificationRepository
   }
 
   private async reapplySourceRules(db: AppDatabase, sourceId: number, reason: string) {
-    const [sourceRules, sourceTransactions] = await Promise.all([
+    const [sourceRules, sourceTransactions, source] = await Promise.all([
       db.select().from(classificationRules).where(eq(classificationRules.sourceId, sourceId)),
       db.select().from(transactions).where(eq(transactions.sourceId, sourceId)),
+      db.query.sources.findFirst({ where: eq(sources.id, sourceId) }),
     ]);
+    if (!source) throw new Error("The classification rule source no longer exists.");
     const timestamp = now();
     const changes: Array<{
       transactionId: number;
@@ -157,19 +159,22 @@ export class DrizzleClassificationRepository implements ClassificationRepository
       classificationRuleId: number | null;
     }> = [];
     for (const transaction of sourceTransactions) {
-      const matchingRule = sourceRules
+      const matchingRules = sourceRules
         .filter(rule => this.matchesRule(rule, transaction.description, economicDirectionForAmount(transaction.amountMinor)))
         .sort(
           (left, right) =>
             ruleMatchPriority(right.matchMode) - ruleMatchPriority(left.matchMode) ||
             right.normalizedDescription.length - left.normalizedDescription.length ||
             right.id - left.id,
-        )[0];
-      const economicType = matchingRule?.economicType ?? "unclassified";
+        );
+      const matchingRule = matchingRules[0];
+      const specificRule = matchingRules.find(rule => rule.matchMode !== "all");
+      const automaticType = automaticEconomicType(source.slug, transaction.transactionType, transaction.amountMinor);
+      const economicType = specificRule?.economicType ?? automaticType ?? matchingRule?.economicType ?? "unclassified";
       if (transaction.economicType === economicType) continue;
       changes.push({
         transactionId: transaction.id,
-        classificationRuleId: matchingRule?.id ?? null,
+        classificationRuleId: specificRule?.id ?? (automaticType ? null : matchingRule?.id ?? null),
         previousEconomicType: transaction.economicType,
         newEconomicType: economicType,
       });

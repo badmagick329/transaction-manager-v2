@@ -10,6 +10,7 @@ import { DrizzleDashboardQueryRepository } from "./infrastructure/db/drizzle-das
 import { DrizzleImportRepository } from "./infrastructure/db/drizzle-import-repository";
 import { DrizzleClassificationRepository } from "./infrastructure/db/drizzle-classification-repository";
 import { DrizzlePayPalReconciliationRepository } from "./infrastructure/db/drizzle-paypal-reconciliation-repository";
+import { ensureTrading212SpendingCashbackIncome } from "./infrastructure/db/ensure-trading212-spending-cashback-income";
 import { createHttpRoutes } from "./infrastructure/http/create-routes";
 import { startWatchedImports } from "./infrastructure/imports/watched-imports";
 
@@ -27,6 +28,7 @@ export function startApp() {
   });
 
   void reconciliation.proposeLinks().catch(error => console.error("Unable to backfill PayPal matches", error));
+  void ensureTrading212SpendingCashbackIncome(db).catch(error => console.error("Unable to classify Trading 212 spending cashback", error));
   void startWatchedImports({ repository: new DrizzleImportRepository(db), afterProcessedImport: reconciliation.proposeLinks }).catch(error => {
     console.error("Unable to start import watcher", error);
   });

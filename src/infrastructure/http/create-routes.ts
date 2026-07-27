@@ -21,6 +21,7 @@ const saveRuleSchema = z.object({
 
 const deleteRuleSchema = z.object({ ruleId: z.number().int().positive() });
 const updatePayPalLinkSchema = z.object({ linkId: z.number().int().positive(), status: z.enum(linkStatuses) });
+const updateCashFlowExclusionSchema = z.object({ transactionId: z.number().int().positive(), excluded: z.boolean() });
 
 async function parseBody<T extends z.ZodType>(request: Request, schema: T): Promise<z.output<T>> {
   return schema.parse(await request.json());
@@ -63,7 +64,9 @@ export function createHttpRoutes({ queries, classifications, reconciliation, ind
         const hideTrading212InterestCashbackAndDividendsText = url.searchParams.get("hideTrading212InterestCashbackAndDividends");
         const hideTrading212InterestCashbackAndDividends = hideTrading212InterestCashbackAndDividendsText === "true";
         const hideTransfersText = url.searchParams.get("hideTransfers");
+        const cashFlowExcludedText = url.searchParams.get("cashFlowExcluded");
         const hideTransfers = hideTransfersText === "true";
+        const cashFlowExcluded = cashFlowExcludedText === "true" ? true : cashFlowExcludedText === "false" ? false : undefined;
         const sourceId = sourceIdText === null ? undefined : Number(sourceIdText);
         const accountId = accountIdText === null ? undefined : Number(accountIdText);
         const minAmountMinor = minAmountText === null ? undefined : Math.round(Number(minAmountText) * 100);
@@ -71,10 +74,10 @@ export function createHttpRoutes({ queries, classifications, reconciliation, ind
         if (economicType !== null && !economicTypes.includes(economicType as (typeof economicTypes)[number])) {
           return Response.json({ error: "economicType is invalid." }, { status: 400 });
         }
-        if ((sourceIdText !== null && (!Number.isInteger(sourceId) || sourceId! < 1)) || (accountIdText !== null && (!Number.isInteger(accountId) || accountId! < 1)) || (currencyCode !== null && !/^[A-Z]{3}$/.test(currencyCode)) || (transactionType !== null && !transactionTypes.includes(transactionType as (typeof transactionTypes)[number])) || (description !== undefined && description.length > 200) || (minAmountText !== null && !Number.isFinite(minAmountMinor)) || (maxAmountText !== null && !Number.isFinite(maxAmountMinor)) || (minAmountMinor !== undefined && maxAmountMinor !== undefined && minAmountMinor > maxAmountMinor) || (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) || (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) || (startDate && endDate && startDate > endDate) || (hideTrading212InterestCashbackAndDividendsText !== null && hideTrading212InterestCashbackAndDividendsText !== "true" && hideTrading212InterestCashbackAndDividendsText !== "false") || (hideTransfersText !== null && hideTransfersText !== "true" && hideTransfersText !== "false")) {
+        if ((sourceIdText !== null && (!Number.isInteger(sourceId) || sourceId! < 1)) || (accountIdText !== null && (!Number.isInteger(accountId) || accountId! < 1)) || (currencyCode !== null && !/^[A-Z]{3}$/.test(currencyCode)) || (transactionType !== null && !transactionTypes.includes(transactionType as (typeof transactionTypes)[number])) || (description !== undefined && description.length > 200) || (minAmountText !== null && !Number.isFinite(minAmountMinor)) || (maxAmountText !== null && !Number.isFinite(maxAmountMinor)) || (minAmountMinor !== undefined && maxAmountMinor !== undefined && minAmountMinor > maxAmountMinor) || (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) || (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) || (startDate && endDate && startDate > endDate) || (hideTrading212InterestCashbackAndDividendsText !== null && hideTrading212InterestCashbackAndDividendsText !== "true" && hideTrading212InterestCashbackAndDividendsText !== "false") || (hideTransfersText !== null && hideTransfersText !== "true" && hideTransfersText !== "false") || (cashFlowExcludedText !== null && cashFlowExcludedText !== "true" && cashFlowExcludedText !== "false")) {
           return Response.json({ error: "Transaction filters are invalid." }, { status: 400 });
         }
-        const filters = { economicType: economicType as (typeof economicTypes)[number] | undefined, sourceId, accountId, currencyCode: currencyCode ?? undefined, transactionType: transactionType as (typeof transactionTypes)[number] | undefined, description, minAmountMinor, maxAmountMinor, startDate, endDate, hideTrading212InterestCashbackAndDividends, hideTransfers };
+        const filters = { economicType: economicType as (typeof economicTypes)[number] | undefined, sourceId, accountId, currencyCode: currencyCode ?? undefined, transactionType: transactionType as (typeof transactionTypes)[number] | undefined, description, minAmountMinor, maxAmountMinor, startDate, endDate, hideTrading212InterestCashbackAndDividends, hideTransfers, cashFlowExcluded };
         if (limitText === null && offsetText === null) {
           return Response.json(await queries.listTransactions(filters));
         }
@@ -102,11 +105,12 @@ export function createHttpRoutes({ queries, classifications, reconciliation, ind
         const endDate = url.searchParams.get("endDate") || undefined;
         const hideTrading212InterestCashbackAndDividendsText = url.searchParams.get("hideTrading212InterestCashbackAndDividends");
         const hideTransfersText = url.searchParams.get("hideTransfers");
+        const cashFlowExcludedText = url.searchParams.get("cashFlowExcluded");
         const sourceId = sourceIdText === null ? undefined : Number(sourceIdText);
         const accountId = accountIdText === null ? undefined : Number(accountIdText);
         const minAmountMinor = minAmountText === null ? undefined : Math.round(Number(minAmountText) * 100);
         const maxAmountMinor = maxAmountText === null ? undefined : Math.round(Number(maxAmountText) * 100);
-        if ((economicType !== null && !economicTypes.includes(economicType as (typeof economicTypes)[number])) || (sourceIdText !== null && (!Number.isInteger(sourceId) || sourceId! < 1)) || (accountIdText !== null && (!Number.isInteger(accountId) || accountId! < 1)) || (currencyCode !== null && !/^[A-Z]{3}$/.test(currencyCode)) || (transactionType !== null && !transactionTypes.includes(transactionType as (typeof transactionTypes)[number])) || (description !== undefined && description.length > 200) || (minAmountText !== null && !Number.isFinite(minAmountMinor)) || (maxAmountText !== null && !Number.isFinite(maxAmountMinor)) || (minAmountMinor !== undefined && maxAmountMinor !== undefined && minAmountMinor > maxAmountMinor) || (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) || (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) || (startDate && endDate && startDate > endDate) || (hideTrading212InterestCashbackAndDividendsText !== null && hideTrading212InterestCashbackAndDividendsText !== "true" && hideTrading212InterestCashbackAndDividendsText !== "false") || (hideTransfersText !== null && hideTransfersText !== "true" && hideTransfersText !== "false")) {
+        if ((economicType !== null && !economicTypes.includes(economicType as (typeof economicTypes)[number])) || (sourceIdText !== null && (!Number.isInteger(sourceId) || sourceId! < 1)) || (accountIdText !== null && (!Number.isInteger(accountId) || accountId! < 1)) || (currencyCode !== null && !/^[A-Z]{3}$/.test(currencyCode)) || (transactionType !== null && !transactionTypes.includes(transactionType as (typeof transactionTypes)[number])) || (description !== undefined && description.length > 200) || (minAmountText !== null && !Number.isFinite(minAmountMinor)) || (maxAmountText !== null && !Number.isFinite(maxAmountMinor)) || (minAmountMinor !== undefined && maxAmountMinor !== undefined && minAmountMinor > maxAmountMinor) || (startDate && !/^\d{4}-\d{2}-\d{2}$/.test(startDate)) || (endDate && !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) || (startDate && endDate && startDate > endDate) || (hideTrading212InterestCashbackAndDividendsText !== null && hideTrading212InterestCashbackAndDividendsText !== "true" && hideTrading212InterestCashbackAndDividendsText !== "false") || (hideTransfersText !== null && hideTransfersText !== "true" && hideTransfersText !== "false") || (cashFlowExcludedText !== null && cashFlowExcludedText !== "true" && cashFlowExcludedText !== "false")) {
           return Response.json({ error: "Transaction filters are invalid." }, { status: 400 });
         }
         return Response.json(await queries.summarizeTransactions({
@@ -122,7 +126,26 @@ export function createHttpRoutes({ queries, classifications, reconciliation, ind
           endDate,
           hideTrading212InterestCashbackAndDividends: hideTrading212InterestCashbackAndDividendsText === "true",
           hideTransfers: hideTransfersText === "true",
+          cashFlowExcluded: cashFlowExcludedText === "true" ? true : cashFlowExcludedText === "false" ? false : undefined,
         }));
+      },
+    },
+
+    "/api/transactions/cash-flow-exclusions/count": {
+      async GET() {
+        return Response.json({ count: await queries.getCashFlowExclusionCount() });
+      },
+    },
+
+    "/api/transactions/cash-flow-exclusion": {
+      async POST(request: Request) {
+        try {
+          const { transactionId, excluded } = await parseBody(request, updateCashFlowExclusionSchema);
+          await queries.setCashFlowExcluded(transactionId, excluded);
+          return Response.json({ ok: true });
+        } catch (error) {
+          return Response.json({ error: error instanceof Error ? error.message : "Unable to update cash-flow exclusion." }, { status: 400 });
+        }
       },
     },
 

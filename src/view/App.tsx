@@ -22,6 +22,7 @@ type Transaction = {
   transactionType: string;
   economicType: string;
   reconciliationLabel: string | null;
+  isExcludedFromCashFlow: boolean;
 };
 
 type TransactionSummary = { currencyCode: string; transactionCount: number; receivedMinor: number; spentMinor: number; netMinor: number };
@@ -158,6 +159,8 @@ export function App() {
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [transactionSummary, setTransactionSummary] = useState<TransactionSummary[]>([]);
+  const [cashFlowExclusionCount, setCashFlowExclusionCount] = useState(0);
+  const [showingCashFlowExclusions, setShowingCashFlowExclusions] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [page, setPage] = useState<"dashboard" | "classification" | "reconciliation" | "transactions">("dashboard");
   const [dateRange, setDateRange] = useState(since2024Range);
@@ -218,7 +221,14 @@ export function App() {
     setAccounts(await response.json());
   };
 
-  const loadTransactions = async (offset = 0, append = false, filter = transactionFilter, filters = transactionFilters) => {
+  const loadCashFlowExclusionCount = async () => {
+    const response = await fetch("/api/transactions/cash-flow-exclusions/count");
+    if (!response.ok) throw new Error("Unable to load cash-flow exclusions.");
+    const body: { count: number } = await response.json();
+    setCashFlowExclusionCount(body.count);
+  };
+
+  const loadTransactions = async (offset = 0, append = false, filter = transactionFilter, filters = transactionFilters, showExcluded = showingCashFlowExclusions) => {
     setLoadingTransactions(true);
     try {
       const query = new URLSearchParams({ limit: String(transactionPageSize), offset: String(offset) });
@@ -234,9 +244,12 @@ export function App() {
       if (filters.endDate) query.set("endDate", filters.endDate);
       if (filters.hideTrading212InterestCashbackAndDividends) query.set("hideTrading212InterestCashbackAndDividends", "true");
       if (filters.hideTransfers) query.set("hideTransfers", "true");
+      if (showExcluded) query.set("cashFlowExcluded", "true");
+      const summaryQuery = new URLSearchParams(query);
+      if (!showExcluded) summaryQuery.set("cashFlowExcluded", "false");
       const [response, summaryResponse] = await Promise.all([
         fetch(`/api/transactions?${query}`),
-        append ? Promise.resolve(null) : fetch(`/api/transactions/summary?${query}`),
+        append ? Promise.resolve(null) : fetch(`/api/transactions/summary?${summaryQuery}`),
       ]);
       if (!response.ok) throw new Error("Unable to load transactions.");
       if (summaryResponse && !summaryResponse.ok) throw new Error("Unable to load transaction summary.");
@@ -259,6 +272,7 @@ export function App() {
           loadAccounts(),
           loadClassifications(),
           loadPayPalLinks(),
+          loadCashFlowExclusionCount(),
         ]);
         if (!importResponse.ok) throw new Error("Unable to load the finance workspace.");
         setLatestImport(await importResponse.json());
@@ -289,7 +303,30 @@ export function App() {
     void loadTransactions().catch(transactionError => {
       setError(transactionError instanceof Error ? transactionError.message : "Unable to load transactions.");
     });
-  }, [page, transactionFilter, transactionFilters]);
+  }, [page, transactionFilter, transactionFilters, showingCashFlowExclusions]);
+
+  const setCashFlowExcluded = async (transaction: Transaction, excluded: boolean) => {
+    setSavingKey(`cash-flow-${transaction.id}`);
+    setError(null);
+    try {
+      const response = await fetch("/api/transactions/cash-flow-exclusion", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ transactionId: transaction.id, excluded }),
+      });
+      if (!response.ok) throw new Error("Unable to update cash-flow exclusion.");
+      await Promise.all([
+        loadTransactions(),
+        loadCashFlowSummary(dateRange),
+        loadCashFlowTrend(dateRange),
+        loadCashFlowExclusionCount(),
+      ]);
+    } catch (updateError) {
+      setError(updateError instanceof Error ? updateError.message : "Unable to update cash-flow exclusion.");
+    } finally {
+      setSavingKey(null);
+    }
+  };
 
   const saveRule = async (input: { sourceId: number; description: string; direction: EconomicDirection; matchMode: ClassificationMatchMode; economicType: EconomicType }, key: string) => {
     setSavingKey(key);
@@ -442,6 +479,7 @@ export function App() {
                   <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Unclassified</p><p className="mt-2 text-2xl font-semibold">{summary.unclassifiedTransactionCount}</p><button className="mt-2 text-sm text-neutral-400 hover:text-neutral-200" onClick={() => setPage("classification")}>Review classifications</button></div>
                 </div>
                 <p className="mt-4 text-sm text-neutral-500">Transfer activity: {formatMoney(summary.transferInflowMinor, summary.currencyCode)} in · {formatMoney(Math.abs(summary.transferOutflowMinor), summary.currencyCode)} out · {formatMoney(summary.transferInflowMinor + summary.transferOutflowMinor, summary.currencyCode)} net</p>
+                {cashFlowExclusionCount > 0 ? <button className="mt-2 text-sm text-neutral-500 hover:text-neutral-300" onClick={() => { setShowingCashFlowExclusions(true); setPage("transactions"); }}>Excluding {cashFlowExclusionCount} marked transaction{cashFlowExclusionCount === 1 ? "" : "s"} from cash flow</button> : null}
                 <div className="mt-4 overflow-x-auto rounded-2xl border border-neutral-800">
                   <table className="w-full min-w-[680px] text-left text-sm">
                     <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500"><tr><th className="px-4 py-3 font-medium">Source</th><th className="px-4 py-3 text-right font-medium">Income</th><th className="px-4 py-3 text-right font-medium">Expenses</th><th className="px-4 py-3 text-right font-medium">Net flow</th><th className="px-4 py-3 text-right font-medium">Transfer activity</th></tr></thead>
@@ -656,7 +694,7 @@ export function App() {
               <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Transactions</p>
               <h2 className="mt-2 text-xl font-semibold">Newest first</h2>
             </div>
-            {!loading ? <p className="text-sm text-neutral-500">{transactions.length}{hasMoreTransactions ? "+" : ""} loaded</p> : null}
+            {!loading ? <div className="flex items-center gap-3"><p className="text-sm text-neutral-500">{transactions.length}{hasMoreTransactions ? "+" : ""} loaded</p>{cashFlowExclusionCount > 0 ? <button className="text-sm text-neutral-400 hover:text-neutral-200" onClick={() => setShowingCashFlowExclusions(current => !current)}>{showingCashFlowExclusions ? "Show all" : `Exclusions (${cashFlowExclusionCount})`}</button> : null}</div> : null}
           </div>
 
           <div className="mt-4 grid gap-3 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -676,7 +714,7 @@ export function App() {
           </div>
           <p className="mt-2 text-xs text-neutral-500">Amount filters use signed values: negative for money out and positive for money in.</p>
 
-          {transactionSummary.length > 0 ? <div className="mt-4 flex flex-wrap gap-3">{transactionSummary.map(summary => <div key={summary.currencyCode} className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 text-sm"><p className="text-xs uppercase tracking-wide text-neutral-500">Filtered total · {summary.transactionCount} transactions · {summary.currencyCode}</p><p className="mt-1 text-neutral-200">Received <span className="font-medium text-emerald-300">{formatMoney(summary.receivedMinor, summary.currencyCode)}</span> · Spent <span className="font-medium text-red-300">{formatMoney(summary.spentMinor, summary.currencyCode)}</span> · Net <span className={summary.netMinor < 0 ? "font-medium text-red-300" : "font-medium text-emerald-300"}>{formatMoney(summary.netMinor, summary.currencyCode)}</span></p></div>)}</div> : null}
+          {transactionSummary.length > 0 ? <div className="mt-4 flex flex-wrap gap-3">{transactionSummary.map(summary => <div key={summary.currencyCode} className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 text-sm"><p className="text-xs uppercase tracking-wide text-neutral-500">{showingCashFlowExclusions ? "Excluded total" : "Filtered total"} · {summary.transactionCount} transactions · {summary.currencyCode}</p><p className="mt-1 text-neutral-200">Received <span className="font-medium text-emerald-300">{formatMoney(summary.receivedMinor, summary.currencyCode)}</span> · Spent <span className="font-medium text-red-300">{formatMoney(summary.spentMinor, summary.currencyCode)}</span> · Net <span className={summary.netMinor < 0 ? "font-medium text-red-300" : "font-medium text-emerald-300"}>{formatMoney(summary.netMinor, summary.currencyCode)}</span></p>{showingCashFlowExclusions ? <p className="mt-1 text-xs text-neutral-500">Not included in dashboard cash flow.</p> : null}</div>)}</div> : null}
 
           {!loading && transactions.length === 0 ? (
             <div className="mt-5 rounded-2xl border border-dashed border-neutral-800 p-8 text-sm text-neutral-400">
@@ -696,19 +734,21 @@ export function App() {
                     <th className="px-4 py-3 font-medium">Type</th>
                     <th className="px-4 py-3 font-medium">Economic</th>
                     <th className="px-4 py-3 text-right font-medium">Amount</th>
+                    <th className="w-10 px-2 py-3"><span className="sr-only">Actions</span></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-neutral-800">
                   {transactions.map(transaction => (
-                    <tr key={transaction.id} className="bg-neutral-950/30">
+                    <tr key={transaction.id} className="group bg-neutral-950/30">
                       <td className="whitespace-nowrap px-4 py-3 text-neutral-400">{formatTransactionDate(transaction.transactionDate)}</td>
-                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}</td>
+                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}</td>
                       <td className="px-4 py-3 text-neutral-400">{transaction.accountName}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.transactionType)}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.economicType)}</td>
                       <td className={`whitespace-nowrap px-4 py-3 text-right font-medium ${transaction.amountMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>
                         {formatMoney(transaction.amountMinor, transaction.currencyCode)}
                       </td>
+                      <td className="px-2 py-3 text-right"><button className="rounded px-2 py-1 text-xs text-neutral-500 opacity-0 transition hover:bg-neutral-800 hover:text-neutral-200 focus:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40" disabled={savingKey === `cash-flow-${transaction.id}`} onClick={() => void setCashFlowExcluded(transaction, !transaction.isExcludedFromCashFlow)}>{transaction.isExcludedFromCashFlow ? "Include" : "Exclude"}</button></td>
                     </tr>
                   ))}
                 </tbody>

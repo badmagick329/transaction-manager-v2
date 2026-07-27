@@ -231,6 +231,20 @@ export const transactionLinks = sqliteTable(
   }),
 );
 
+export const cashFlowExclusions = sqliteTable(
+  "cash_flow_exclusions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    transactionId: integer("transaction_id")
+      .notNull()
+      .references(() => transactions.id),
+    createdAt: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  table => ({
+    transactionUnique: uniqueIndex("cash_flow_exclusions_transaction_unique").on(table.transactionId),
+  }),
+);
+
 export const schema = {
   sources,
   accounts,
@@ -242,4 +256,5 @@ export const schema = {
   rawRecords,
   transactions,
   transactionLinks,
+  cashFlowExclusions,
 };

@@ -11,7 +11,7 @@ import type {
 } from "../../app/ports/dashboard-query-repository";
 import type { EconomicType } from "../../core/finance/constants";
 import type { AppDatabase } from "./client";
-import { accounts, importBatches, sources, transactionLinks, transactions } from "./schema";
+import { accounts, cashFlowExclusions, importBatches, sources, transactionLinks, transactions } from "./schema";
 
 function periodsInRange(startDate: string, endDate: string, granularity: "month" | "year") {
   const startYear = Number(startDate.slice(0, 4));
@@ -56,7 +56,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .orderBy(accounts.name);
   }
 
-  async listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }): Promise<TransactionListItem[]> {
+  async listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean; cashFlowExcluded?: boolean }): Promise<TransactionListItem[]> {
     const query = this.db
       .select({
         id: transactions.id,
@@ -89,28 +89,34 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       options?.endDate ? lte(transactions.transactionDate, `${options.endDate}T99`) : undefined,
       options?.hideTrading212InterestCashbackAndDividends ? sql`not (${sources.slug} = 'trading212' and ${transactions.transactionType} in ('interest', 'cashback', 'dividend'))` : undefined,
       options?.hideTransfers ? sql`${transactions.economicType} <> 'transfer'` : undefined,
+      options?.cashFlowExcluded === true ? sql`exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
+      options?.cashFlowExcluded === false ? sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
     ].filter(Boolean);
     const filteredQuery = conditions.length > 0 ? query.where(and(...conditions)) : query;
     const orderedQuery = filteredQuery.orderBy(desc(transactions.transactionDate), desc(transactions.id));
     const transactionRows = options?.limit ? await orderedQuery.limit(options.limit).offset(options.offset ?? 0) : await orderedQuery;
     if (transactionRows.length === 0) return [];
     const transactionIds = transactionRows.map(transaction => transaction.id);
-    const links = await this.db.select().from(transactionLinks).where(and(
-      eq(transactionLinks.linkType, "funds"),
-      eq(transactionLinks.createdBy, "system_rule"),
-      or(inArray(transactionLinks.fromTransactionId, transactionIds), inArray(transactionLinks.toTransactionId, transactionIds)),
-    ));
+    const [links, exclusions] = await Promise.all([
+      this.db.select().from(transactionLinks).where(and(
+        eq(transactionLinks.linkType, "funds"),
+        eq(transactionLinks.createdBy, "system_rule"),
+        or(inArray(transactionLinks.fromTransactionId, transactionIds), inArray(transactionLinks.toTransactionId, transactionIds)),
+      )),
+      this.db.select({ transactionId: cashFlowExclusions.transactionId }).from(cashFlowExclusions).where(inArray(cashFlowExclusions.transactionId, transactionIds)),
+    ]);
+    const excludedTransactionIds = new Set(exclusions.map(exclusion => exclusion.transactionId));
     return transactionRows.map(transaction => {
       const fromLink = links.find(link => link.fromTransactionId === transaction.id && link.status !== "rejected");
       const toLink = links.find(link => link.toTransactionId === transaction.id && link.status !== "rejected");
       const reconciliationLabel = fromLink
         ? fromLink.status === "confirmed" ? "Linked to PayPal purchase" : "PayPal match pending"
         : toLink ? toLink.status === "confirmed" ? "Funded by HSBC PayPal payment" : "HSBC match pending" : null;
-      return { ...transaction, reconciliationLabel };
+      return { ...transaction, reconciliationLabel, isExcludedFromCashFlow: excludedTransactionIds.has(transaction.id) };
     });
   }
 
-  async summarizeTransactions(options?: { economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }): Promise<TransactionSummary[]> {
+  async summarizeTransactions(options?: { economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean; cashFlowExcluded?: boolean }): Promise<TransactionSummary[]> {
     const query = this.db
       .select({
         currencyCode: transactions.currencyCode,
@@ -135,9 +141,24 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       options?.endDate ? lte(transactions.transactionDate, `${options.endDate}T99`) : undefined,
       options?.hideTrading212InterestCashbackAndDividends ? sql`not (${sources.slug} = 'trading212' and ${transactions.transactionType} in ('interest', 'cashback', 'dividend'))` : undefined,
       options?.hideTransfers ? sql`${transactions.economicType} <> 'transfer'` : undefined,
+      options?.cashFlowExcluded === true ? sql`exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
+      options?.cashFlowExcluded === false ? sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
     ].filter(Boolean);
     const filteredQuery = conditions.length > 0 ? query.where(and(...conditions)) : query;
     return filteredQuery.groupBy(transactions.currencyCode).orderBy(transactions.currencyCode);
+  }
+
+  async setCashFlowExcluded(transactionId: number, excluded: boolean) {
+    if (excluded) {
+      await this.db.insert(cashFlowExclusions).values({ transactionId }).onConflictDoNothing();
+      return;
+    }
+    await this.db.delete(cashFlowExclusions).where(eq(cashFlowExclusions.transactionId, transactionId));
+  }
+
+  async getCashFlowExclusionCount() {
+    const [row] = await this.db.select({ count: sql<number>`count(*)` }).from(cashFlowExclusions);
+    return row?.count ?? 0;
   }
 
   async getLatestImport(): Promise<LatestImport> {
@@ -163,6 +184,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       gte(transactions.transactionDate, startDate),
       lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)),
       sql`not exists (select 1 from ${transactionLinks} where ${transactionLinks.fromTransactionId} = ${transactions.id} and ${transactionLinks.linkType} = 'funds' and ${transactionLinks.status} = 'confirmed')`,
+      sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})`,
     );
     const [summaries, sourceRows] = await Promise.all([
       this.db
@@ -239,6 +261,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         gte(transactions.transactionDate, startDate),
         lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)),
         sql`not exists (select 1 from ${transactionLinks} where ${transactionLinks.fromTransactionId} = ${transactions.id} and ${transactionLinks.linkType} = 'funds' and ${transactionLinks.status} = 'confirmed')`,
+        sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})`,
       ))
       .groupBy(transactions.currencyCode, periodExpression)
       .orderBy(transactions.currencyCode, periodExpression);

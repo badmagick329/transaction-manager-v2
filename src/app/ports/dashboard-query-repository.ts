@@ -22,6 +22,7 @@ export type TransactionListItem = {
   economicType: string;
   status: string;
   reconciliationLabel: string | null;
+  isExcludedFromCashFlow: boolean;
 };
 
 export type TransactionSummary = {
@@ -82,8 +83,10 @@ export type CashFlowTrend = {
 
 export type DashboardQueryRepository = {
   listAccounts(): Promise<AccountListItem[]>;
-  listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }): Promise<TransactionListItem[]>;
-  summarizeTransactions(options?: { economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean }): Promise<TransactionSummary[]>;
+  listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean; cashFlowExcluded?: boolean }): Promise<TransactionListItem[]>;
+  summarizeTransactions(options?: { economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean; cashFlowExcluded?: boolean }): Promise<TransactionSummary[]>;
+  setCashFlowExcluded(transactionId: number, excluded: boolean): Promise<void>;
+  getCashFlowExclusionCount(): Promise<number>;
   getLatestImport(): Promise<LatestImport>;
   getCashFlowSummary(range: { startDate: string; endDate: string }): Promise<CashFlowSummary[]>;
   getCashFlowTrend(range: { startDate: string; endDate: string; granularity: "month" | "year" }): Promise<CashFlowTrend[]>;

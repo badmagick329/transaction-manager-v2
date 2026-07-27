@@ -318,6 +318,34 @@ describe("watched bank imports", () => {
     ]);
   });
 
+  test("excludes individual transactions from cash-flow summaries without hiding them from the main list", async () => {
+    const { db, repository } = await createTestContext();
+    await importStandardFile(repository, {
+      fileName: "exclusions.json",
+      fileHash: "cash-flow-exclusions",
+      importFile: importFile([
+        record({ externalId: "expense", description: "One-off expense", amountMinor: -500, rawPayload: { row: "1" } }),
+        record({ externalId: "income", description: "Salary", amountMinor: 1000, rawPayload: { row: "2" } }),
+      ]),
+    });
+    const source = (await db.select().from(sources))[0]!;
+    const classifications = new DrizzleClassificationRepository(db);
+    await classifications.saveRule({ sourceId: source.id, description: "One-off expense", matchMode: "exact", direction: "outflow", economicType: "expense" });
+    await classifications.saveRule({ sourceId: source.id, description: "Salary", matchMode: "exact", direction: "inflow", economicType: "income" });
+    const queries = createDashboardQueries(new DrizzleDashboardQueryRepository(db));
+    const [expense] = await queries.listTransactions({ description: "One-off expense" });
+
+    await queries.setCashFlowExcluded(expense!.id, true);
+
+    expect(await queries.getCashFlowExclusionCount()).toBe(1);
+    expect((await queries.listTransactions({ description: "One-off expense" }))[0]).toMatchObject({ isExcludedFromCashFlow: true });
+    expect((await queries.listTransactions({ cashFlowExcluded: true })).map(transaction => transaction.description)).toEqual(["One-off expense"]);
+    expect((await queries.getCashFlowSummary({ startDate: "2026-06-01", endDate: "2026-06-01" }))[0]).toMatchObject({ incomeMinor: 1000, expenseMinor: 0, netCashFlowMinor: 1000 });
+
+    await queries.setCashFlowExcluded(expense!.id, false);
+    expect((await queries.getCashFlowSummary({ startDate: "2026-06-01", endDate: "2026-06-01" }))[0]).toMatchObject({ incomeMinor: 1000, expenseMinor: -500, netCashFlowMinor: 500 });
+  });
+
   test("summarizes monthly and yearly cash-flow trends with zero periods and separate currencies", async () => {
     const { db, repository } = await createTestContext();
     await importStandardFile(repository, {

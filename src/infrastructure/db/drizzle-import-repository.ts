@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { descriptionMatchesRule, economicDirectionForAmount, normalizeDescription, ruleMatchPriority } from "../../app/classification";
 import type { ImportBatchSummary, ImportRepository, ProcessedImportFile, ResolvedImportRecord } from "../../app/ports/import-repository";
 import { createSourceRecordHash, resolveImportRecordAccounts } from "../../app/use-cases/import-standard-file";
@@ -6,6 +6,21 @@ import type { AppDatabase } from "./client";
 import { accounts, classificationRules, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactions } from "./schema";
 
 const now = () => new Date().toISOString();
+const insertBatchSize = 100;
+
+function inBatches<T>(items: T[], size = insertBatchSize) {
+  const batches: T[][] = [];
+  for (let index = 0; index < items.length; index += size) batches.push(items.slice(index, index + size));
+  return batches;
+}
+
+function accountKey(account: ResolvedImportRecord["account"]) {
+  return account.externalId ? `external:${account.externalId}` : `name:${account.name}\u0000${account.currencyCode}`;
+}
+
+function accountKindForSource(sourceKind: ProcessedImportFile["importFile"]["source"]["kind"]) {
+  return sourceKind === "credit_card" ? "credit_card" : sourceKind === "robinhood" || sourceKind === "trading212" ? "investment_portfolio" : "bank_account";
+}
 
 function toSummary(row: typeof importBatches.$inferSelect): ImportBatchSummary {
   return {
@@ -94,32 +109,44 @@ export class DrizzleImportRepository implements ImportRepository {
       }
       const sourceRules = await tx.select().from(classificationRules).where(eq(classificationRules.sourceId, source.id));
       const records = resolveImportRecordAccounts(input.importFile);
-      let duplicateRecordCount = 0;
-
+      const existingAccounts = await tx.select().from(accounts).where(eq(accounts.sourceId, source.id));
+      const accountsByKey = new Map(existingAccounts.map(account => [account.externalId ? `external:${account.externalId}` : `name:${account.name}\u0000${account.currencyCode}`, account]));
+      const missingAccountInputs = new Map<string, ResolvedImportRecord["account"]>();
       for (const record of records) {
-        const sourceRecordHash = createSourceRecordHash(record);
-        const existingRawRecord = await tx.query.rawRecords.findFirst({
-          where: and(eq(rawRecords.sourceId, source.id), eq(rawRecords.sourceRecordHash, sourceRecordHash)),
-        });
+        const key = accountKey(record.account);
+        if (!accountsByKey.has(key)) missingAccountInputs.set(key, record.account);
+      }
+      if (missingAccountInputs.size > 0) {
+        const createdAccounts = await tx
+          .insert(accounts)
+          .values([...missingAccountInputs.values()].map(account => ({
+            sourceId: source.id,
+            externalId: account.externalId,
+            name: account.name,
+            kind: accountKindForSource(input.importFile.source.kind),
+            currencyCode: account.currencyCode,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          })))
+          .returning();
+        for (const account of createdAccounts) {
+          accountsByKey.set(account.externalId ? `external:${account.externalId}` : `name:${account.name}\u0000${account.currencyCode}`, account);
+        }
+      }
 
-        if (existingRawRecord) {
+      const recordsWithHashes = records.map(record => ({ record, sourceRecordHash: createSourceRecordHash(record) }));
+      const existingSourceRecordHashes = await this.findExistingSourceRecordHashes(tx, source.id, recordsWithHashes.map(item => item.sourceRecordHash));
+      let duplicateRecordCount = 0;
+      const seenSourceRecordHashes = new Set(existingSourceRecordHashes);
+      const newRecords = [] as Array<{ record: ResolvedImportRecord; sourceRecordHash: string; accountId: number; classificationRule: typeof classificationRules.$inferSelect | undefined }>;
+      for (const { record, sourceRecordHash } of recordsWithHashes) {
+        if (seenSourceRecordHashes.has(sourceRecordHash)) {
           duplicateRecordCount += 1;
           continue;
         }
-
-        const account = await this.findOrCreateAccount(tx, source.id, record, input.importFile.source.kind);
-        const [rawRecord] = await tx
-          .insert(rawRecords)
-          .values({
-            importBatchId: batch.id,
-            sourceId: source.id,
-            externalId: record.externalId ?? null,
-            sourceRecordHash,
-            payloadJson: JSON.stringify({ source: input.importFile.source, record }),
-            createdAt: timestamp,
-          })
-          .returning();
-
+        seenSourceRecordHashes.add(sourceRecordHash);
+        const account = accountsByKey.get(accountKey(record.account));
+        if (!account) throw new Error(`Unable to resolve account for ${record.description}.`);
         const direction = economicDirectionForAmount(record.amountMinor);
         const classificationRule = sourceRules
           .filter(rule => rule.direction === direction)
@@ -130,15 +157,30 @@ export class DrizzleImportRepository implements ImportRepository {
               right.normalizedDescription.length - left.normalizedDescription.length ||
               right.id - left.id,
           )[0];
-        const economicType = classificationRule?.economicType ?? "unclassified";
-        const [transaction] = await tx.insert(transactions).values({
+        newRecords.push({ record, sourceRecordHash, accountId: account.id, classificationRule });
+      }
+
+      for (const recordsBatch of inBatches(newRecords)) {
+        const insertedRawRecords = await tx
+          .insert(rawRecords)
+          .values(recordsBatch.map(({ record, sourceRecordHash }) => ({
+            importBatchId: batch.id,
+            sourceId: source.id,
+            externalId: record.externalId ?? null,
+            sourceRecordHash,
+            payloadJson: JSON.stringify({ source: input.importFile.source, record }),
+            createdAt: timestamp,
+          })))
+          .returning({ id: rawRecords.id, sourceRecordHash: rawRecords.sourceRecordHash });
+        const rawRecordIdsByHash = new Map(insertedRawRecords.map(rawRecord => [rawRecord.sourceRecordHash, rawRecord.id]));
+        await tx.insert(transactions).values(recordsBatch.map(({ record, sourceRecordHash, accountId, classificationRule }) => ({
           sourceId: source.id,
-          accountId: account.id,
-          rawRecordId: rawRecord.id,
+          accountId,
+          rawRecordId: rawRecordIdsByHash.get(sourceRecordHash),
           externalId: record.externalId ?? null,
           sourceTransactionHash: sourceRecordHash,
           transactionType: record.transactionType ?? "unclassified",
-          economicType,
+          economicType: classificationRule?.economicType ?? "unclassified",
           status: record.status,
           amountMinor: record.amountMinor,
           currencyCode: record.currencyCode,
@@ -148,17 +190,24 @@ export class DrizzleImportRepository implements ImportRepository {
           rawDescription: record.rawDescription ?? null,
           createdAt: timestamp,
           updatedAt: timestamp,
-        }).returning();
-        if (classificationRule) {
-          await tx.insert(economicClassificationAudits).values({
-            transactionId: transaction.id,
+        })));
+        const transactionRows = await tx
+          .select({ id: transactions.id, sourceTransactionHash: transactions.sourceTransactionHash })
+          .from(transactions)
+          .where(and(eq(transactions.sourceId, source.id), inArray(transactions.sourceTransactionHash, recordsBatch.map(item => item.sourceRecordHash))));
+        const transactionIdsByHash = new Map(transactionRows.map(transaction => [transaction.sourceTransactionHash, transaction.id]));
+        const audits = recordsBatch.flatMap(({ sourceRecordHash, classificationRule }) => {
+          const transactionId = transactionIdsByHash.get(sourceRecordHash);
+          return classificationRule && transactionId ? [{
+            transactionId,
             classificationRuleId: classificationRule.id,
-            previousEconomicType: "unclassified",
-            newEconomicType: economicType,
+            previousEconomicType: "unclassified" as const,
+            newEconomicType: classificationRule.economicType,
             reason: "rule_applied_on_import",
             createdAt: timestamp,
-          });
-        }
+          }] : [];
+        });
+        if (audits.length > 0) await tx.insert(economicClassificationAudits).values(audits);
       }
 
       const completedAt = now();
@@ -265,35 +314,19 @@ export class DrizzleImportRepository implements ImportRepository {
     ]);
   }
 
-  private async findOrCreateAccount(
+  private async findExistingSourceRecordHashes(
     db: AppDatabase,
     sourceId: number,
-    record: ResolvedImportRecord,
-    sourceKind: ProcessedImportFile["importFile"]["source"]["kind"],
+    hashes: string[],
   ) {
-    const identity = record.account.externalId
-      ? and(eq(accounts.sourceId, sourceId), eq(accounts.externalId, record.account.externalId))
-      : and(
-          eq(accounts.sourceId, sourceId),
-          eq(accounts.name, record.account.name),
-          eq(accounts.currencyCode, record.account.currencyCode),
-        );
-    const existing = await db.query.accounts.findFirst({ where: identity });
-    if (existing) return existing;
-
-    const timestamp = now();
-    const [account] = await db
-      .insert(accounts)
-      .values({
-        sourceId,
-        externalId: record.account.externalId,
-        name: record.account.name,
-        kind: sourceKind === "credit_card" ? "credit_card" : sourceKind === "robinhood" || sourceKind === "trading212" ? "investment_portfolio" : "bank_account",
-        currencyCode: record.account.currencyCode,
-        createdAt: timestamp,
-        updatedAt: timestamp,
-      })
-      .returning();
-    return account;
+    const existingHashes = new Set<string>();
+    for (const hashesBatch of inBatches([...new Set(hashes)])) {
+      const rows = await db
+        .select({ sourceRecordHash: rawRecords.sourceRecordHash })
+        .from(rawRecords)
+        .where(and(eq(rawRecords.sourceId, sourceId), inArray(rawRecords.sourceRecordHash, hashesBatch)));
+      for (const row of rows) existingHashes.add(row.sourceRecordHash);
+    }
+    return existingHashes;
   }
 }

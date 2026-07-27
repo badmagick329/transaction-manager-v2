@@ -253,8 +253,8 @@ describe("watched bank imports", () => {
     const listedTransactions = await queries.listTransactions();
     const secondPage = await queries.listTransactions({ limit: 1, offset: 1 });
     const unclassifiedTransactions = await queries.listTransactions({ economicType: "unclassified" });
-    const filteredTransactions = await queries.listTransactions({ description: "newer", minAmountMinor: 400, maxAmountMinor: 500, startDate: "2026-06-02", endDate: "2026-06-02" });
-    const filteredSummary = await queries.summarizeTransactions({ description: "newer", minAmountMinor: 400, maxAmountMinor: 500, startDate: "2026-06-02", endDate: "2026-06-02" });
+    const filteredTransactions = await queries.listTransactions({ description: "newer", minAmountMinor: -500, maxAmountMinor: -400, startDate: "2026-06-02", endDate: "2026-06-02" });
+    const filteredSummary = await queries.summarizeTransactions({ description: "newer", minAmountMinor: -500, maxAmountMinor: -400, startDate: "2026-06-02", endDate: "2026-06-02" });
 
     expect(latest).toMatchObject({ fileName: "statement.json", status: "processed", recordCount: 2 });
     expect(listedTransactions.map(transaction => transaction.description)).toEqual(["Newer", "Coffee shop"]);

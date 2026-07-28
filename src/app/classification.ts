@@ -1,4 +1,5 @@
 import type { ClassificationMatchMode, EconomicDirection, EconomicType } from "../core/finance/constants";
+import { trading212AutomaticEconomicType } from "./trading212-classification-policy";
 
 export function economicTypesForDirection(direction: EconomicDirection): EconomicType[] {
   return direction === "inflow" ? ["income", "transfer", "unclassified"] : ["expense", "transfer", "unclassified"];
@@ -35,8 +36,5 @@ export function ruleMatchPriority(matchMode: ClassificationMatchMode) {
 }
 
 export function automaticEconomicType(sourceSlug: string, transactionType: string, amountMinor: number): EconomicType | undefined {
-  if (sourceSlug !== "trading212") return undefined;
-  if (transactionType === "purchase" && amountMinor < 0) return "expense";
-  if (transactionType === "refund" && amountMinor > 0) return "income";
-  return undefined;
+  return sourceSlug === "trading212" ? trading212AutomaticEconomicType(transactionType, amountMinor) : undefined;
 }

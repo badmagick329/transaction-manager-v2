@@ -1,8 +1,9 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { automaticEconomicType, descriptionMatchesRule, economicDirectionForAmount, normalizeDescription, ruleMatchPriority } from "../../app/classification";
+import { automaticEconomicType, descriptionMatchesRule, economicDirectionForAmount, ruleMatchPriority } from "../../app/classification";
 import type { ImportBatchSummary, ImportRepository, ProcessedImportFile, ResolvedImportRecord } from "../../app/ports/import-repository";
 import { createSourceRecordHash, resolveImportRecordAccounts } from "../../app/use-cases/import-standard-file";
 import type { AppDatabase } from "./client";
+import { ensureTrading212DefaultRules } from "./ensure-trading212-default-rules";
 import { accounts, classificationRules, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactions } from "./schema";
 
 const now = () => new Date().toISOString();
@@ -105,7 +106,7 @@ export class DrizzleImportRepository implements ImportRepository {
 
       const { source, isNew: isNewSource } = await this.findOrCreateSource(tx, input.importFile.source);
       if (isNewSource && input.importFile.source.kind === "trading212") {
-        await this.createTrading212DefaultRules(tx, source.id);
+        await ensureTrading212DefaultRules(tx, source.id);
       }
       const sourceRules = await tx.select().from(classificationRules).where(eq(classificationRules.sourceId, source.id));
       const records = resolveImportRecordAccounts(input.importFile);
@@ -306,18 +307,6 @@ export class DrizzleImportRepository implements ImportRepository {
       })
       .returning();
     return { source, isNew: true };
-  }
-
-  private async createTrading212DefaultRules(db: AppDatabase, sourceId: number) {
-    const timestamp = now();
-    await db.insert(classificationRules).values([
-      { sourceId, normalizedDescription: "*", matchMode: "all", direction: "inflow", economicType: "transfer", createdAt: timestamp, updatedAt: timestamp },
-      { sourceId, normalizedDescription: "*", matchMode: "all", direction: "outflow", economicType: "transfer", createdAt: timestamp, updatedAt: timestamp },
-      { sourceId, normalizedDescription: normalizeDescription("Card purchase"), matchMode: "starts_with", direction: "outflow", economicType: "expense", createdAt: timestamp, updatedAt: timestamp },
-      { sourceId, normalizedDescription: normalizeDescription("Card cashback"), matchMode: "starts_with", direction: "inflow", economicType: "income", createdAt: timestamp, updatedAt: timestamp },
-      { sourceId, normalizedDescription: normalizeDescription("Spending cashback"), matchMode: "starts_with", direction: "inflow", economicType: "income", createdAt: timestamp, updatedAt: timestamp },
-      { sourceId, normalizedDescription: normalizeDescription("Spending cashback"), matchMode: "starts_with", direction: "outflow", economicType: "expense", createdAt: timestamp, updatedAt: timestamp },
-    ]);
   }
 
   private async findExistingSourceRecordHashes(

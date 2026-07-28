@@ -1,5 +1,5 @@
 import { startApp } from "./main";
 
-const server = startApp();
+const server = await startApp();
 
 console.log(`Server running at ${server.url}`);

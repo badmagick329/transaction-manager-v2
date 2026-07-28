@@ -3,6 +3,7 @@ import { mkdtemp, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, test } from "bun:test";
+import { and, eq } from "drizzle-orm";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { createDb } from "../db/client";
 import { DrizzleImportRepository } from "../db/drizzle-import-repository";
@@ -14,7 +15,7 @@ import { importStandardFile } from "../../app/use-cases/import-standard-file";
 import { createDashboardQueries } from "../../app/use-cases/query-dashboard";
 import { createHttpRoutes } from "../http/create-routes";
 import { standardImportFileSchema } from "../../app/contracts/standard-import";
-import { accounts, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactionTypeCorrections, transactions } from "../db/schema";
+import { accounts, classificationRules, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactionTypeCorrections, transactions } from "../db/schema";
 import { startWatchedImports } from "./watched-imports";
 
 const migrationsFolder = join(process.cwd(), "drizzle");
@@ -190,6 +191,29 @@ describe("watched bank imports", () => {
       expect.objectContaining({ name: "Trading 212 Stocks ISA", kind: "investment_portfolio" }),
     ]));
     expect((await db.select().from(transactions)).map(transaction => transaction.economicType)).toEqual(["expense", "income", "expense", "transfer"]);
+    expect(await db.select().from(classificationRules)).toHaveLength(6);
+  });
+
+  test("backfills only missing Trading 212 defaults without overwriting existing rules", async () => {
+    const { db, repository } = await createTestContext();
+    const trading212Import = {
+      source: { slug: "trading212", name: "Trading 212", kind: "trading212" as const, fileName: "activity.csv", account: null },
+      records: [record({ externalId: "cashback", description: "Spending cashback", amountMinor: 125, transactionType: "cashback", account: { externalId: "invest", name: "Trading 212 Invest", currencyCode: "GBP" } })],
+    };
+    await importStandardFile(repository, { fileName: "trading212.json", fileHash: "trading212-default-backfill", importFile: trading212Import });
+    const [source] = await db.select().from(sources);
+    const incomingCashbackRule = (await db.select().from(classificationRules).where(eq(classificationRules.sourceId, source!.id))).find(rule => rule.normalizedDescription === "spending cashback" && rule.direction === "inflow")!;
+    await db.update(classificationRules).set({ economicType: "transfer" }).where(eq(classificationRules.id, incomingCashbackRule.id));
+    await db.delete(classificationRules).where(and(eq(classificationRules.sourceId, source!.id), eq(classificationRules.normalizedDescription, "spending cashback"), eq(classificationRules.direction, "outflow")));
+    await db.update(transactions).set({ economicType: "unclassified" }).where(eq(transactions.sourceId, source!.id));
+
+    const classifications = new DrizzleClassificationRepository(db);
+    expect(await classifications.ensureTrading212DefaultRules()).toBe(1);
+    expect(await classifications.ensureTrading212DefaultRules()).toBe(0);
+    const rules = await db.select().from(classificationRules).where(eq(classificationRules.sourceId, source!.id));
+    expect(rules).toHaveLength(6);
+    expect(rules.find(rule => rule.id === incomingCashbackRule.id)?.economicType).toBe("transfer");
+    expect((await db.select().from(transactions))[0]?.economicType).toBe("transfer");
   });
 
   test("proposes PayPal funding matches and excludes only confirmed HSBC duplicates from cash flow", async () => {
@@ -290,6 +314,24 @@ describe("watched bank imports", () => {
     expect(unclassifiedTransactions).toHaveLength(2);
     expect(filteredTransactions.map(transaction => transaction.description)).toEqual(["Newer"]);
     expect(filteredSummary).toEqual([{ currencyCode: "GBP", transactionCount: 1, incomeMinor: 0, expenseMinor: 0, netCashFlowMinor: 0, transferInflowMinor: 0, transferOutflowMinor: 0 }]);
+  });
+
+  test("includes end-of-day timestamps consistently across transaction and dashboard queries", async () => {
+    const { repository, db } = await createTestContext();
+    await importStandardFile(repository, {
+      fileName: "timestamps.json",
+      fileHash: "timestamp-range",
+      importFile: importFile([
+        record({ externalId: "end-of-day", description: "End of day", transactionDate: "2026-06-02T23:59:59Z" }),
+        record({ externalId: "following-day", description: "Following day", transactionDate: "2026-06-03T00:00:00Z", rawPayload: { row: "2" } }),
+      ]),
+    });
+    const queries = createDashboardQueries(new DrizzleDashboardQueryRepository(db));
+
+    expect((await queries.listTransactions({ startDate: "2026-06-02", endDate: "2026-06-02" })).map(transaction => transaction.description)).toEqual(["End of day"]);
+    expect((await queries.summarizeTransactions({ startDate: "2026-06-02", endDate: "2026-06-02" }))[0]).toMatchObject({ transactionCount: 1 });
+    expect((await queries.getCashFlowSummary({ startDate: "2026-06-02", endDate: "2026-06-02" }))[0]).toMatchObject({ unclassifiedTransactionCount: 1 });
+    expect((await queries.getCashFlowTrend({ startDate: "2026-06-02", endDate: "2026-06-02", granularity: "month" }))[0]?.periods[0]).toMatchObject({ unclassifiedTransactionCount: 1 });
   });
 
   test("summarizes cash flow by date range, currency, and source without counting transfers in net cash flow", async () => {

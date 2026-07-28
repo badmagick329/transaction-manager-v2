@@ -9,6 +9,7 @@ import type {
 } from "../../app/ports/classification-repository";
 import type { EconomicType } from "../../core/finance/constants";
 import type { AppDatabase } from "./client";
+import { ensureTrading212DefaultRules as ensureTrading212DefaultRulesForSource } from "./ensure-trading212-default-rules";
 import { classificationRules, economicClassificationAudits, sources, transactions } from "./schema";
 
 const now = () => new Date().toISOString();
@@ -90,6 +91,14 @@ export class DrizzleClassificationRepository implements ClassificationRepository
       .innerJoin(sources, eq(classificationRules.sourceId, sources.id))
       .orderBy(asc(sources.name), asc(classificationRules.normalizedDescription));
     return rows.map(({ rule, sourceName }) => toRule(rule, sourceName));
+  }
+
+  async ensureTrading212DefaultRules() {
+    return this.db.transaction(async tx => {
+      const source = await tx.query.sources.findFirst({ where: eq(sources.slug, "trading212") });
+      if (!source || !await ensureTrading212DefaultRulesForSource(tx, source.id)) return 0;
+      return this.reapplySourceRules(tx, source.id, "trading212_defaults_backfilled");
+    });
   }
 
   async saveRule(input: SaveClassificationRuleInput): Promise<ClassificationRuleResult> {

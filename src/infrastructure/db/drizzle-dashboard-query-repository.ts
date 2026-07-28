@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, like, lte, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, like, lt, or, sql, type SQL } from "drizzle-orm";
 import type {
   AccountListItem,
   CashFlowSourceBreakdown,
@@ -11,6 +11,7 @@ import type {
   TransactionListOptions,
   TransactionSummary,
 } from "../../app/ports/dashboard-query-repository";
+import { exclusiveEndDate } from "../../app/date-range";
 import type { AppDatabase } from "./client";
 import { accounts, cashFlowExclusions, importBatches, sources, transactionLinks, transactions } from "./schema";
 
@@ -50,7 +51,7 @@ function transactionFilterConditions(filters?: TransactionFilters): SQL[] {
     filters?.minAmountMinor !== undefined ? sql`${transactions.amountMinor} >= ${filters.minAmountMinor}` : undefined,
     filters?.maxAmountMinor !== undefined ? sql`${transactions.amountMinor} <= ${filters.maxAmountMinor}` : undefined,
     filters?.startDate ? gte(transactions.transactionDate, filters.startDate) : undefined,
-    filters?.endDate ? lte(transactions.transactionDate, `${filters.endDate}T99`) : undefined,
+    filters?.endDate ? lt(transactions.transactionDate, exclusiveEndDate(filters.endDate)) : undefined,
     filters?.hideTrading212InterestCashbackAndDividends ? sql`not (${sources.slug} = 'trading212' and ${transactions.transactionType} in ('interest', 'cashback', 'dividend'))` : undefined,
     filters?.hideTransfers ? sql`${transactions.economicType} <> 'transfer'` : undefined,
     filters?.cashFlowExcluded === true ? sql`exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
@@ -185,11 +186,9 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
   }
 
   async getCashFlowSummary({ startDate, endDate }: { startDate: string; endDate: string }): Promise<CashFlowSummary[]> {
-    const endExclusive = new Date(`${endDate}T00:00:00Z`);
-    endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
     const dateRange = and(
       gte(transactions.transactionDate, startDate),
-      lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)),
+      lt(transactions.transactionDate, exclusiveEndDate(endDate)),
       ...cashFlowScopeConditions(),
     );
     const [summaries, sourceRows] = await Promise.all([
@@ -240,8 +239,6 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
   }
 
   async getCashFlowTrend({ startDate, endDate, granularity }: { startDate: string; endDate: string; granularity: "month" | "year" }): Promise<CashFlowTrend[]> {
-    const endExclusive = new Date(`${endDate}T00:00:00Z`);
-    endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
     const periodExpression = granularity === "month"
       ? sql<string>`substr(${transactions.transactionDate}, 1, 7)`
       : sql<string>`substr(${transactions.transactionDate}, 1, 4)`;
@@ -254,7 +251,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .from(transactions)
       .where(and(
         gte(transactions.transactionDate, startDate),
-        lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)),
+        lt(transactions.transactionDate, exclusiveEndDate(endDate)),
         ...cashFlowScopeConditions(),
       ))
       .groupBy(transactions.currencyCode, periodExpression)

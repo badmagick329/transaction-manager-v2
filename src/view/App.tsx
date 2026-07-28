@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "../index.css";
+import { ClassificationPage } from "./ClassificationPage";
+import { ReconciliationPage } from "./ReconciliationPage";
+import { economicTypeOptions, economicTypeOptionsForDirection, formatCompactMoney, formatMoney, formatTransactionDate, matchModeOptions, titleCase } from "./formatters";
+import type { Account, CashFlowSummary, CashFlowTrend, ClassificationMatchMode, ClassificationReviewGroup, ClassificationRule, EconomicDirection, EconomicType, LatestImport, PayPalPaymentLink, Transaction, TransactionFilters, TransactionSummary } from "./types";
 
-type LatestImport = {
+/*type LatestImport = {
   fileName: string;
   status: string;
   recordCount: number;
@@ -153,7 +157,14 @@ function titleCase(value: string) {
 
 function formatTransactionDate(transactionDate: string) {
   return transactionDate.slice(0, 10);
-}
+}*/
+
+function toDateInput(date: Date) { return date.toISOString().slice(0, 10); }
+const transactionPageSize = 100;
+const classificationReviewPageSize = 25;
+function currentMonthRange() { const now = new Date(); return { startDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))), endDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0))) }; }
+function since2024Range() { return { startDate: "2024-01-01", endDate: toDateInput(new Date()) }; }
+function presetDateRange(preset: "since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date") { if (preset === "since_2024") return since2024Range(); if (preset === "month") return currentMonthRange(); const end = new Date(); const start = new Date(end); if (preset === "year_to_date") start.setUTCMonth(0, 1); else start.setUTCDate(start.getUTCDate() - (preset === "last_30_days" ? 29 : 89)); return { startDate: toDateInput(start), endDate: toDateInput(end) }; }
 
 export function App() {
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
@@ -549,6 +560,8 @@ export function App() {
           </section>
         ) : null}
 
+        {page === "classification" ? <ClassificationPage loading={loading} reviewGroups={reviewGroups} rules={rules} savingKey={savingKey} ruleDrafts={ruleDrafts} visibleCount={visibleReviewGroupCount} setRuleDrafts={setRuleDrafts} loadMore={() => setVisibleReviewGroupCount(current => current + classificationReviewPageSize)} saveRule={(input, key) => void saveRule(input, key)} deleteRule={rule => void deleteRule(rule)} /> : null}
+        {/*
         <section className={page === "classification" ? "mt-8" : "hidden"}>
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Classification review</p>
@@ -618,7 +631,9 @@ export function App() {
             </button>
           ) : null}
         </section>
+        */}
 
+        {/*
         <section className={page === "classification" ? "mt-8" : "hidden"}>
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Classification rules</p>
@@ -655,7 +670,10 @@ export function App() {
             </div>
           ) : null}
         </section>
+        */}
 
+        {page === "reconciliation" ? <ReconciliationPage loading={loading} links={payPalLinks} savingKey={savingKey} updateLink={(linkId, status) => void updatePayPalLink(linkId, status)} /> : null}
+        {/*
         <section className={page === "reconciliation" ? "mt-8" : "hidden"}>
           <div>
             <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Reconciliation</p>
@@ -687,6 +705,7 @@ export function App() {
             })}
           </div>
         </section>
+        */}
 
         <section className={page === "transactions" ? "mt-8" : "hidden"}>
           <div className="flex items-baseline justify-between">

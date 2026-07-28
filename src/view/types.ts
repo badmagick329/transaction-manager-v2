@@ -1,0 +1,16 @@
+export type LatestImport = { fileName: string; status: string; recordCount: number; duplicateRecordCount: number; attemptCount: number; errorMessage: string | null; importedAt: string | null } | null;
+export type EconomicType = "expense" | "income" | "transfer" | "unclassified";
+export type EconomicDirection = "inflow" | "outflow";
+export type ClassificationMatchMode = "exact" | "starts_with" | "contains" | "all";
+export type Transaction = { id: number; accountName: string; transactionDate: string; description: string; amountMinor: number; currencyCode: string; transactionType: string; economicType: string; reconciliationLabel: string | null; isExcludedFromCashFlow: boolean };
+export type TransactionSummary = { currencyCode: string; transactionCount: number; incomeMinor: number; expenseMinor: number; netCashFlowMinor: number; transferInflowMinor: number; transferOutflowMinor: number };
+export type Account = { id: number; name: string; currencyCode: string; sourceName: string | null; sourceId: number | null };
+export type TransactionFilters = { sourceId: string; accountId: string; currencyCode: string; transactionType: string; description: string; minAmount: string; maxAmount: string; startDate: string; endDate: string; hideTrading212InterestCashbackAndDividends: boolean; hideTransfers: boolean };
+export type PayPalPaymentLink = { id: number; status: "pending" | "confirmed" | "rejected"; confidenceScore: number | null; matchReason: string | null; hsbcTransaction: { id: number; transactionDate: string; description: string; amountMinor: number; currencyCode: string }; paypalTransaction: { id: number; transactionDate: string; description: string; amountMinor: number; currencyCode: string } };
+export type ClassificationReviewGroup = { sourceId: number; sourceName: string; description: string; direction: EconomicDirection; transactionCount: number; latestTransactionDate: string; samples: Array<{ id: number; transactionDate: string; amountMinor: number; currencyCode: string }> };
+export type ClassificationRule = { id: number; sourceId: number; sourceName: string; normalizedDescription: string; matchMode: ClassificationMatchMode; direction: EconomicDirection; economicType: EconomicType };
+export type CashFlowSourceBreakdown = { sourceName: string; incomeMinor: number; expenseMinor: number; netCashFlowMinor: number; transferInflowMinor: number; transferOutflowMinor: number };
+export type CashFlowSummary = { currencyCode: string; incomeMinor: number; expenseMinor: number; netCashFlowMinor: number; transferInflowMinor: number; transferOutflowMinor: number; unclassifiedTransactionCount: number; sources: CashFlowSourceBreakdown[] };
+export type CashFlowPeriod = { period: string; label: string; incomeMinor: number; expenseMinor: number; netCashFlowMinor: number; transferInflowMinor: number; transferOutflowMinor: number; unclassifiedTransactionCount: number };
+export type CashFlowTrend = { currencyCode: string; periods: CashFlowPeriod[] };
+export type DateRange = { startDate: string; endDate: string };

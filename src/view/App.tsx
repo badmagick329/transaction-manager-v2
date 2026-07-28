@@ -3,6 +3,8 @@ import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, T
 import "../index.css";
 import { ClassificationPage } from "./ClassificationPage";
 import { ReconciliationPage } from "./ReconciliationPage";
+import { DatePicker } from "../components/ui/date-picker";
+import { Checkbox } from "../components/ui/checkbox";
 import { economicTypeOptions, economicTypeOptionsForDirection, formatCompactMoney, formatMoney, formatTransactionDate, matchModeOptions, titleCase } from "./formatters";
 import type { Account, CashFlowSummary, CashFlowTrend, ClassificationMatchMode, ClassificationReviewGroup, ClassificationRule, EconomicDirection, EconomicType, LatestImport, PayPalPaymentLink, Transaction, TransactionFilters, TransactionSummary } from "./types";
 
@@ -162,6 +164,8 @@ function formatTransactionDate(transactionDate: string) {
 function toDateInput(date: Date) { return date.toISOString().slice(0, 10); }
 const transactionPageSize = 100;
 const classificationReviewPageSize = 25;
+function isAmountInput(value: string) { return value === "" || /^-?\d*(?:\.\d{0,2})?$/.test(value); }
+function isCompleteAmount(value: string) { return /^-?\d+(?:\.\d{1,2})?$/.test(value); }
 function currentMonthRange() { const now = new Date(); return { startDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))), endDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0))) }; }
 function since2024Range() { return { startDate: "2024-01-01", endDate: toDateInput(new Date()) }; }
 function presetDateRange(preset: "since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date") { if (preset === "since_2024") return since2024Range(); if (preset === "month") return currentMonthRange(); const end = new Date(); const start = new Date(end); if (preset === "year_to_date") start.setUTCMonth(0, 1); else start.setUTCDate(start.getUTCDate() - (preset === "last_30_days" ? 29 : 89)); return { startDate: toDateInput(start), endDate: toDateInput(end) }; }
@@ -249,8 +253,8 @@ export function App() {
       if (filters.currencyCode) query.set("currencyCode", filters.currencyCode);
       if (filters.transactionType) query.set("transactionType", filters.transactionType);
       if (filters.description.trim()) query.set("description", filters.description.trim());
-      if (filters.minAmount) query.set("minAmount", filters.minAmount);
-      if (filters.maxAmount) query.set("maxAmount", filters.maxAmount);
+      if (isCompleteAmount(filters.minAmount)) query.set("minAmount", filters.minAmount);
+      if (isCompleteAmount(filters.maxAmount)) query.set("maxAmount", filters.maxAmount);
       if (filters.startDate) query.set("startDate", filters.startDate);
       if (filters.endDate) query.set("endDate", filters.endDate);
       if (filters.hideTrading212InterestCashbackAndDividends) query.set("hideTrading212InterestCashbackAndDividends", "true");
@@ -723,13 +727,13 @@ export function App() {
             <label className="text-xs text-neutral-400">Currency<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.currencyCode} onChange={event => setTransactionFilters(current => ({ ...current, currencyCode: event.target.value }))}><option value="">All currencies</option>{currencies.map(currency => <option key={currency} value={currency}>{currency}</option>)}</select></label>
             <label className="text-xs text-neutral-400">Transaction type<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.transactionType} onChange={event => setTransactionFilters(current => ({ ...current, transactionType: event.target.value }))}><option value="">All types</option><option value="purchase">Purchase</option><option value="direct_debit">Direct debit</option><option value="transfer">Transfer</option><option value="funding">Funding</option><option value="withdrawal">Withdrawal</option><option value="card_payment">Card payment</option><option value="refund">Refund</option><option value="fee">Fee</option><option value="cashback">Cashback</option><option value="interest">Interest</option><option value="dividend">Dividend</option><option value="adjustment">Adjustment</option><option value="unclassified">Unclassified</option></select></label>
             <label className="text-xs text-neutral-400">Description contains<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.description} onChange={event => setTransactionFilters(current => ({ ...current, description: event.target.value }))} placeholder="e.g. Spotify" /></label>
-            <label className="text-xs text-neutral-400">Amount from<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="number" step="0.01" value={transactionFilters.minAmount} onChange={event => setTransactionFilters(current => ({ ...current, minAmount: event.target.value }))} placeholder="e.g. -200.00" /></label>
-            <label className="text-xs text-neutral-400">Amount to<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="number" step="0.01" value={transactionFilters.maxAmount} onChange={event => setTransactionFilters(current => ({ ...current, maxAmount: event.target.value }))} placeholder="e.g. 200.00" /></label>
-            <label className="flex items-end gap-2 text-sm text-neutral-300"><input type="checkbox" checked={transactionFilters.hideTrading212InterestCashbackAndDividends} onChange={event => setTransactionFilters(current => ({ ...current, hideTrading212InterestCashbackAndDividends: event.target.checked }))} />Hide Trading 212 interest, cashback, and dividends</label>
-            <label className="flex items-end gap-2 text-sm text-neutral-300"><input type="checkbox" checked={transactionFilters.hideTransfers} onChange={event => setTransactionFilters(current => ({ ...current, hideTransfers: event.target.checked }))} />Hide transfers</label>
+            <label className="text-xs text-neutral-400">Amount from<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="text" inputMode="decimal" value={transactionFilters.minAmount} onChange={event => { if (isAmountInput(event.target.value)) setTransactionFilters(current => ({ ...current, minAmount: event.target.value })); }} placeholder="e.g. -200.00" /></label>
+            <label className="text-xs text-neutral-400">Amount to<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="text" inputMode="decimal" value={transactionFilters.maxAmount} onChange={event => { if (isAmountInput(event.target.value)) setTransactionFilters(current => ({ ...current, maxAmount: event.target.value })); }} placeholder="e.g. 200.00" /></label>
+            <label className="flex items-center gap-2 pt-6 text-sm text-neutral-300"><Checkbox checked={transactionFilters.hideTrading212InterestCashbackAndDividends} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, hideTrading212InterestCashbackAndDividends: checked === true }))} />Hide Trading 212 interest, cashback, and dividends</label>
+            <label className="flex items-center gap-2 pt-6 text-sm text-neutral-300"><Checkbox checked={transactionFilters.hideTransfers} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, hideTransfers: checked === true }))} />Hide transfers</label>
             <div className="flex items-end"><button className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800" onClick={() => { setTransactionFilter("all"); setTransactionFilters({ sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "", hideTrading212InterestCashbackAndDividends: false, hideTransfers: false }); }}>Clear filters</button></div>
-            <label className="text-xs text-neutral-400">From<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="date" value={transactionFilters.startDate} onChange={event => setTransactionFilters(current => ({ ...current, startDate: event.target.value }))} /></label>
-            <label className="text-xs text-neutral-400">To<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="date" value={transactionFilters.endDate} onChange={event => setTransactionFilters(current => ({ ...current, endDate: event.target.value }))} /></label>
+            <label className="text-xs text-neutral-400">From<DatePicker value={transactionFilters.startDate} onChange={value => setTransactionFilters(current => ({ ...current, startDate: value }))} placeholder="Select start date" /></label>
+            <label className="text-xs text-neutral-400">To<DatePicker value={transactionFilters.endDate} onChange={value => setTransactionFilters(current => ({ ...current, endDate: value }))} placeholder="Select end date" /></label>
           </div>
           <p className="mt-2 text-xs text-neutral-500">Amount filters use signed values: negative for money out and positive for money in.</p>
 

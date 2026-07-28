@@ -25,7 +25,7 @@ type Transaction = {
   isExcludedFromCashFlow: boolean;
 };
 
-type TransactionSummary = { currencyCode: string; transactionCount: number; receivedMinor: number; spentMinor: number; netMinor: number };
+type TransactionSummary = { currencyCode: string; transactionCount: number; incomeMinor: number; expenseMinor: number; netCashFlowMinor: number; transferInflowMinor: number; transferOutflowMinor: number };
 
 type Account = { id: number; name: string; currencyCode: string; sourceName: string | null; sourceId: number | null };
 type TransactionFilters = { sourceId: string; accountId: string; currencyCode: string; transactionType: string; description: string; minAmount: string; maxAmount: string; startDate: string; endDate: string; hideTrading212InterestCashbackAndDividends: boolean; hideTransfers: boolean };
@@ -714,7 +714,7 @@ export function App() {
           </div>
           <p className="mt-2 text-xs text-neutral-500">Amount filters use signed values: negative for money out and positive for money in.</p>
 
-          {transactionSummary.length > 0 ? <div className="mt-4 flex flex-wrap gap-3">{transactionSummary.map(summary => <div key={summary.currencyCode} className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 text-sm"><p className="text-xs uppercase tracking-wide text-neutral-500">{showingCashFlowExclusions ? "Excluded total" : "Filtered total"} · {summary.transactionCount} transactions · {summary.currencyCode}</p><p className="mt-1 text-neutral-200">Received <span className="font-medium text-emerald-300">{formatMoney(summary.receivedMinor, summary.currencyCode)}</span> · Spent <span className="font-medium text-red-300">{formatMoney(summary.spentMinor, summary.currencyCode)}</span> · Net <span className={summary.netMinor < 0 ? "font-medium text-red-300" : "font-medium text-emerald-300"}>{formatMoney(summary.netMinor, summary.currencyCode)}</span></p>{showingCashFlowExclusions ? <p className="mt-1 text-xs text-neutral-500">Not included in dashboard cash flow.</p> : null}</div>)}</div> : null}
+          {transactionSummary.length > 0 ? <div className="mt-4 flex flex-wrap gap-3">{transactionSummary.map(summary => <div key={summary.currencyCode} className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 text-sm"><p className="text-xs uppercase tracking-wide text-neutral-500">{showingCashFlowExclusions ? "Excluded total" : "Filtered total"} · {summary.transactionCount} transactions · {summary.currencyCode}</p><p className="mt-1 text-neutral-200">Income <span className="font-medium text-emerald-300">{formatMoney(summary.incomeMinor, summary.currencyCode)}</span> · Expenses <span className="font-medium text-red-300">{formatMoney(Math.abs(summary.expenseMinor), summary.currencyCode)}</span> · Net cash flow <span className={summary.netCashFlowMinor < 0 ? "font-medium text-red-300" : "font-medium text-emerald-300"}>{formatMoney(summary.netCashFlowMinor, summary.currencyCode)}</span></p><p className="mt-1 text-xs text-neutral-500">Transfers: {formatMoney(summary.transferInflowMinor, summary.currencyCode)} in · {formatMoney(Math.abs(summary.transferOutflowMinor), summary.currencyCode)} out</p>{showingCashFlowExclusions ? <p className="mt-1 text-xs text-neutral-500">Not included in dashboard cash flow.</p> : null}</div>)}</div> : null}
 
           {!loading && transactions.length === 0 ? (
             <div className="mt-5 rounded-2xl border border-dashed border-neutral-800 p-8 text-sm text-neutral-400">

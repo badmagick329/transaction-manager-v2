@@ -261,7 +261,7 @@ describe("watched bank imports", () => {
     expect(secondPage.map(transaction => transaction.description)).toEqual(["Coffee shop"]);
     expect(unclassifiedTransactions).toHaveLength(2);
     expect(filteredTransactions.map(transaction => transaction.description)).toEqual(["Newer"]);
-    expect(filteredSummary).toEqual([{ currencyCode: "GBP", transactionCount: 1, receivedMinor: 0, spentMinor: 450, netMinor: -450 }]);
+    expect(filteredSummary).toEqual([{ currencyCode: "GBP", transactionCount: 1, incomeMinor: 0, expenseMinor: 0, netCashFlowMinor: 0, transferInflowMinor: 0, transferOutflowMinor: 0 }]);
   });
 
   test("summarizes cash flow by date range, currency, and source without counting transfers in net cash flow", async () => {

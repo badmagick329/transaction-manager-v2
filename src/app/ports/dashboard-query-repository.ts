@@ -28,9 +28,11 @@ export type TransactionListItem = {
 export type TransactionSummary = {
   currencyCode: string;
   transactionCount: number;
-  receivedMinor: number;
-  spentMinor: number;
-  netMinor: number;
+  incomeMinor: number;
+  expenseMinor: number;
+  netCashFlowMinor: number;
+  transferInflowMinor: number;
+  transferOutflowMinor: number;
 };
 
 export type LatestImport = {

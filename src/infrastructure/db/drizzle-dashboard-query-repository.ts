@@ -121,9 +121,11 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .select({
         currencyCode: transactions.currencyCode,
         transactionCount: sql<number>`count(*)`,
-        receivedMinor: sql<number>`coalesce(sum(case when ${transactions.amountMinor} > 0 then ${transactions.amountMinor} else 0 end), 0)`,
-        spentMinor: sql<number>`coalesce(sum(case when ${transactions.amountMinor} < 0 then -${transactions.amountMinor} else 0 end), 0)`,
-        netMinor: sql<number>`coalesce(sum(${transactions.amountMinor}), 0)`,
+        incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
+        expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
+        netCashFlowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} in ('income', 'expense') then ${transactions.amountMinor} else 0 end), 0)`,
+        transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
+        transferOutflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} < 0 then ${transactions.amountMinor} else 0 end), 0)`,
       })
       .from(transactions)
       .innerJoin(accounts, eq(transactions.accountId, accounts.id))

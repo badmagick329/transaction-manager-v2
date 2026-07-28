@@ -35,6 +35,27 @@ export type TransactionSummary = {
   transferOutflowMinor: number;
 };
 
+export type TransactionFilters = {
+  economicType?: EconomicType;
+  sourceId?: number;
+  accountId?: number;
+  currencyCode?: string;
+  transactionType?: TransactionType;
+  description?: string;
+  minAmountMinor?: number;
+  maxAmountMinor?: number;
+  startDate?: string;
+  endDate?: string;
+  hideTrading212InterestCashbackAndDividends?: boolean;
+  hideTransfers?: boolean;
+  cashFlowExcluded?: boolean;
+};
+
+export type TransactionListOptions = TransactionFilters & {
+  limit?: number;
+  offset?: number;
+};
+
 export type LatestImport = {
   id: number;
   fileName: string;
@@ -85,8 +106,8 @@ export type CashFlowTrend = {
 
 export type DashboardQueryRepository = {
   listAccounts(): Promise<AccountListItem[]>;
-  listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean; cashFlowExcluded?: boolean }): Promise<TransactionListItem[]>;
-  summarizeTransactions(options?: { economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: TransactionType; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean; cashFlowExcluded?: boolean }): Promise<TransactionSummary[]>;
+  listTransactions(options?: TransactionListOptions): Promise<TransactionListItem[]>;
+  summarizeTransactions(options?: TransactionFilters): Promise<TransactionSummary[]>;
   setCashFlowExcluded(transactionId: number, excluded: boolean): Promise<void>;
   getCashFlowExclusionCount(): Promise<number>;
   getLatestImport(): Promise<LatestImport>;

@@ -12,6 +12,7 @@ import { DrizzlePayPalReconciliationRepository } from "../db/drizzle-paypal-reco
 import { correctHsbcDirectDebitTransfers } from "../db/correct-hsbc-direct-debits";
 import { importStandardFile } from "../../app/use-cases/import-standard-file";
 import { createDashboardQueries } from "../../app/use-cases/query-dashboard";
+import { createHttpRoutes } from "../http/create-routes";
 import { standardImportFileSchema } from "../../app/contracts/standard-import";
 import { accounts, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactionTypeCorrections, transactions } from "../db/schema";
 import { startWatchedImports } from "./watched-imports";
@@ -53,6 +54,31 @@ function record(overrides: Record<string, unknown> = {}) {
 }
 
 describe("watched bank imports", () => {
+  test("parses transaction filters identically for the list and summary endpoints", async () => {
+    const captured: unknown[] = [];
+    const routes = createHttpRoutes({
+      queries: {
+        listTransactions: async (filters: unknown) => { captured.push(filters); return []; },
+        summarizeTransactions: async (filters: unknown) => { captured.push(filters); return []; },
+      } as ReturnType<typeof createDashboardQueries>,
+      classifications: {} as never,
+      reconciliation: {} as never,
+      indexHtml: null,
+    });
+    const query = "economicType=expense&sourceId=2&accountId=3&currencyCode=GBP&transactionType=purchase&description=Coffee&minAmount=-12.34&maxAmount=56.78&startDate=2026-01-01&endDate=2026-01-31&hideTrading212InterestCashbackAndDividends=true&hideTransfers=false&cashFlowExcluded=false";
+    const listResponse = await routes["/api/transactions"].GET(new Request(`http://localhost/api/transactions?${query}`));
+    const summaryResponse = await routes["/api/transactions/summary"].GET(new Request(`http://localhost/api/transactions/summary?${query}`));
+
+    expect(listResponse.status).toBe(200);
+    expect(summaryResponse.status).toBe(200);
+    expect(captured).toEqual([
+      { economicType: "expense", sourceId: 2, accountId: 3, currencyCode: "GBP", transactionType: "purchase", description: "Coffee", minAmountMinor: -1234, maxAmountMinor: 5678, startDate: "2026-01-01", endDate: "2026-01-31", hideTrading212InterestCashbackAndDividends: true, hideTransfers: false, cashFlowExcluded: false },
+      { economicType: "expense", sourceId: 2, accountId: 3, currencyCode: "GBP", transactionType: "purchase", description: "Coffee", minAmountMinor: -1234, maxAmountMinor: 5678, startDate: "2026-01-01", endDate: "2026-01-31", hideTrading212InterestCashbackAndDividends: true, hideTransfers: false, cashFlowExcluded: false },
+    ]);
+    expect((await routes["/api/transactions"].GET(new Request("http://localhost/api/transactions?minAmount=20&maxAmount=10"))).status).toBe(400);
+    expect((await routes["/api/transactions/summary"].GET(new Request("http://localhost/api/transactions/summary?minAmount=20&maxAmount=10"))).status).toBe(400);
+  });
+
   test("preserves known types, defaults missing types, and reuses fallback accounts", async () => {
     const { db, repository } = await createTestContext();
     const parsed = importFile([record({ transactionType: "purchase" }), record({ description: "Unknown", rawPayload: { row: "2" } })]);
@@ -191,9 +217,11 @@ describe("watched bank imports", () => {
     const dashboard = createDashboardQueries(new DrizzleDashboardQueryRepository(db));
     expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-5998);
     expect((await dashboard.getCashFlowTrend({ startDate: "2026-02-01", endDate: "2026-02-28", granularity: "month" }))[0]?.periods[0]?.expenseMinor).toBe(-5998);
+    expect((await dashboard.summarizeTransactions())[0]?.expenseMinor).toBe(-5998);
     await reconciliation.setPayPalPaymentLinkStatus(link!.id, "confirmed");
     expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-2999);
     expect((await dashboard.getCashFlowTrend({ startDate: "2026-02-01", endDate: "2026-02-28", granularity: "month" }))[0]?.periods[0]?.expenseMinor).toBe(-2999);
+    expect((await dashboard.summarizeTransactions())[0]?.expenseMinor).toBe(-2999);
     await reconciliation.setPayPalPaymentLinkStatus(link!.id, "rejected");
     expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-5998);
     await reconciliation.setPayPalPaymentLinkStatus(link!.id, "pending");
@@ -340,6 +368,7 @@ describe("watched bank imports", () => {
     expect(await queries.getCashFlowExclusionCount()).toBe(1);
     expect((await queries.listTransactions({ description: "One-off expense" }))[0]).toMatchObject({ isExcludedFromCashFlow: true });
     expect((await queries.listTransactions({ cashFlowExcluded: true })).map(transaction => transaction.description)).toEqual(["One-off expense"]);
+    expect((await queries.summarizeTransactions({ cashFlowExcluded: false }))[0]).toMatchObject({ incomeMinor: 1000, expenseMinor: 0, netCashFlowMinor: 1000 });
     expect((await queries.getCashFlowSummary({ startDate: "2026-06-01", endDate: "2026-06-01" }))[0]).toMatchObject({ incomeMinor: 1000, expenseMinor: 0, netCashFlowMinor: 1000 });
 
     await queries.setCashFlowExcluded(expense!.id, false);

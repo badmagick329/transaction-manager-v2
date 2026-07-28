@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, inArray, like, lte, lt, or, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, like, lte, lt, or, sql, type SQL } from "drizzle-orm";
 import type {
   AccountListItem,
   CashFlowSourceBreakdown,
@@ -7,9 +7,10 @@ import type {
   DashboardQueryRepository,
   LatestImport,
   TransactionListItem,
+  TransactionFilters,
+  TransactionListOptions,
   TransactionSummary,
 } from "../../app/ports/dashboard-query-repository";
-import type { EconomicType } from "../../core/finance/constants";
 import type { AppDatabase } from "./client";
 import { accounts, cashFlowExclusions, importBatches, sources, transactionLinks, transactions } from "./schema";
 
@@ -38,6 +39,43 @@ function periodLabel(period: string, granularity: "month" | "year") {
   return new Intl.DateTimeFormat("en-GB", { month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${period}-01T00:00:00Z`));
 }
 
+function transactionFilterConditions(filters?: TransactionFilters): SQL[] {
+  return [
+    filters?.economicType ? eq(transactions.economicType, filters.economicType) : undefined,
+    filters?.sourceId ? eq(transactions.sourceId, filters.sourceId) : undefined,
+    filters?.accountId ? eq(transactions.accountId, filters.accountId) : undefined,
+    filters?.currencyCode ? eq(transactions.currencyCode, filters.currencyCode) : undefined,
+    filters?.transactionType ? eq(transactions.transactionType, filters.transactionType) : undefined,
+    filters?.description ? like(transactions.description, `%${filters.description}%`) : undefined,
+    filters?.minAmountMinor !== undefined ? sql`${transactions.amountMinor} >= ${filters.minAmountMinor}` : undefined,
+    filters?.maxAmountMinor !== undefined ? sql`${transactions.amountMinor} <= ${filters.maxAmountMinor}` : undefined,
+    filters?.startDate ? gte(transactions.transactionDate, filters.startDate) : undefined,
+    filters?.endDate ? lte(transactions.transactionDate, `${filters.endDate}T99`) : undefined,
+    filters?.hideTrading212InterestCashbackAndDividends ? sql`not (${sources.slug} = 'trading212' and ${transactions.transactionType} in ('interest', 'cashback', 'dividend'))` : undefined,
+    filters?.hideTransfers ? sql`${transactions.economicType} <> 'transfer'` : undefined,
+    filters?.cashFlowExcluded === true ? sql`exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
+    filters?.cashFlowExcluded === false ? sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
+  ].filter((condition): condition is SQL => condition !== undefined);
+}
+
+function cashFlowScopeConditions(): SQL[] {
+  return [
+    sql`not exists (select 1 from ${transactionLinks} where ${transactionLinks.fromTransactionId} = ${transactions.id} and ${transactionLinks.linkType} = 'funds' and ${transactionLinks.status} = 'confirmed')`,
+    sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})`,
+  ];
+}
+
+function cashFlowAggregateFields() {
+  return {
+    incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
+    expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
+    netCashFlowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} in ('income', 'expense') then ${transactions.amountMinor} else 0 end), 0)`,
+    transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
+    transferOutflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} < 0 then ${transactions.amountMinor} else 0 end), 0)`,
+    unclassifiedTransactionCount: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'unclassified' then 1 else 0 end), 0)`,
+  };
+}
+
 export class DrizzleDashboardQueryRepository implements DashboardQueryRepository {
   constructor(private readonly db: AppDatabase) {}
 
@@ -56,7 +94,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .orderBy(accounts.name);
   }
 
-  async listTransactions(options?: { limit?: number; offset?: number; economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean; cashFlowExcluded?: boolean }): Promise<TransactionListItem[]> {
+  async listTransactions(options?: TransactionListOptions): Promise<TransactionListItem[]> {
     const query = this.db
       .select({
         id: transactions.id,
@@ -76,22 +114,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .from(transactions)
       .innerJoin(accounts, eq(transactions.accountId, accounts.id))
       .innerJoin(sources, eq(transactions.sourceId, sources.id));
-    const conditions = [
-      options?.economicType ? eq(transactions.economicType, options.economicType) : undefined,
-      options?.sourceId ? eq(transactions.sourceId, options.sourceId) : undefined,
-      options?.accountId ? eq(transactions.accountId, options.accountId) : undefined,
-      options?.currencyCode ? eq(transactions.currencyCode, options.currencyCode) : undefined,
-      options?.transactionType ? eq(transactions.transactionType, options.transactionType) : undefined,
-      options?.description ? like(transactions.description, `%${options.description}%`) : undefined,
-      options?.minAmountMinor !== undefined ? sql`${transactions.amountMinor} >= ${options.minAmountMinor}` : undefined,
-      options?.maxAmountMinor !== undefined ? sql`${transactions.amountMinor} <= ${options.maxAmountMinor}` : undefined,
-      options?.startDate ? gte(transactions.transactionDate, options.startDate) : undefined,
-      options?.endDate ? lte(transactions.transactionDate, `${options.endDate}T99`) : undefined,
-      options?.hideTrading212InterestCashbackAndDividends ? sql`not (${sources.slug} = 'trading212' and ${transactions.transactionType} in ('interest', 'cashback', 'dividend'))` : undefined,
-      options?.hideTransfers ? sql`${transactions.economicType} <> 'transfer'` : undefined,
-      options?.cashFlowExcluded === true ? sql`exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
-      options?.cashFlowExcluded === false ? sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
-    ].filter(Boolean);
+    const conditions = transactionFilterConditions(options);
     const filteredQuery = conditions.length > 0 ? query.where(and(...conditions)) : query;
     const orderedQuery = filteredQuery.orderBy(desc(transactions.transactionDate), desc(transactions.id));
     const transactionRows = options?.limit ? await orderedQuery.limit(options.limit).offset(options.offset ?? 0) : await orderedQuery;
@@ -116,36 +139,18 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
     });
   }
 
-  async summarizeTransactions(options?: { economicType?: EconomicType; sourceId?: number; accountId?: number; currencyCode?: string; transactionType?: string; description?: string; minAmountMinor?: number; maxAmountMinor?: number; startDate?: string; endDate?: string; hideTrading212InterestCashbackAndDividends?: boolean; hideTransfers?: boolean; cashFlowExcluded?: boolean }): Promise<TransactionSummary[]> {
+  async summarizeTransactions(options?: TransactionFilters): Promise<TransactionSummary[]> {
+    const { unclassifiedTransactionCount: _unclassifiedTransactionCount, ...summaryAggregateFields } = cashFlowAggregateFields();
     const query = this.db
       .select({
         currencyCode: transactions.currencyCode,
         transactionCount: sql<number>`count(*)`,
-        incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
-        expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
-        netCashFlowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} in ('income', 'expense') then ${transactions.amountMinor} else 0 end), 0)`,
-        transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
-        transferOutflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} < 0 then ${transactions.amountMinor} else 0 end), 0)`,
+        ...summaryAggregateFields,
       })
       .from(transactions)
       .innerJoin(accounts, eq(transactions.accountId, accounts.id))
       .innerJoin(sources, eq(transactions.sourceId, sources.id));
-    const conditions = [
-      options?.economicType ? eq(transactions.economicType, options.economicType) : undefined,
-      options?.sourceId ? eq(transactions.sourceId, options.sourceId) : undefined,
-      options?.accountId ? eq(transactions.accountId, options.accountId) : undefined,
-      options?.currencyCode ? eq(transactions.currencyCode, options.currencyCode) : undefined,
-      options?.transactionType ? eq(transactions.transactionType, options.transactionType) : undefined,
-      options?.description ? like(transactions.description, `%${options.description}%`) : undefined,
-      options?.minAmountMinor !== undefined ? sql`${transactions.amountMinor} >= ${options.minAmountMinor}` : undefined,
-      options?.maxAmountMinor !== undefined ? sql`${transactions.amountMinor} <= ${options.maxAmountMinor}` : undefined,
-      options?.startDate ? gte(transactions.transactionDate, options.startDate) : undefined,
-      options?.endDate ? lte(transactions.transactionDate, `${options.endDate}T99`) : undefined,
-      options?.hideTrading212InterestCashbackAndDividends ? sql`not (${sources.slug} = 'trading212' and ${transactions.transactionType} in ('interest', 'cashback', 'dividend'))` : undefined,
-      options?.hideTransfers ? sql`${transactions.economicType} <> 'transfer'` : undefined,
-      options?.cashFlowExcluded === true ? sql`exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
-      options?.cashFlowExcluded === false ? sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
-    ].filter(Boolean);
+    const conditions = [...transactionFilterConditions(options), ...cashFlowScopeConditions()];
     const filteredQuery = conditions.length > 0 ? query.where(and(...conditions)) : query;
     return filteredQuery.groupBy(transactions.currencyCode).orderBy(transactions.currencyCode);
   }
@@ -185,18 +190,13 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
     const dateRange = and(
       gte(transactions.transactionDate, startDate),
       lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)),
-      sql`not exists (select 1 from ${transactionLinks} where ${transactionLinks.fromTransactionId} = ${transactions.id} and ${transactionLinks.linkType} = 'funds' and ${transactionLinks.status} = 'confirmed')`,
-      sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})`,
+      ...cashFlowScopeConditions(),
     );
     const [summaries, sourceRows] = await Promise.all([
       this.db
       .select({
         currencyCode: transactions.currencyCode,
-        incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
-        expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
-        transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
-        transferOutflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} < 0 then ${transactions.amountMinor} else 0 end), 0)`,
-        unclassifiedTransactionCount: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'unclassified' then 1 else 0 end), 0)`,
+        ...cashFlowAggregateFields(),
       })
       .from(transactions)
       .where(dateRange)
@@ -206,10 +206,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         .select({
           currencyCode: transactions.currencyCode,
           sourceName: sources.name,
-          incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
-          expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
-          transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
-          transferOutflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} < 0 then ${transactions.amountMinor} else 0 end), 0)`,
+          ...cashFlowAggregateFields(),
         })
         .from(transactions)
         .innerJoin(sources, eq(transactions.sourceId, sources.id))
@@ -252,18 +249,13 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       .select({
         currencyCode: transactions.currencyCode,
         period: periodExpression,
-        incomeMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'income' then ${transactions.amountMinor} else 0 end), 0)`,
-        expenseMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'expense' then ${transactions.amountMinor} else 0 end), 0)`,
-        transferInflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} >= 0 then ${transactions.amountMinor} else 0 end), 0)`,
-        transferOutflowMinor: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'transfer' and ${transactions.amountMinor} < 0 then ${transactions.amountMinor} else 0 end), 0)`,
-        unclassifiedTransactionCount: sql<number>`coalesce(sum(case when ${transactions.economicType} = 'unclassified' then 1 else 0 end), 0)`,
+        ...cashFlowAggregateFields(),
       })
       .from(transactions)
       .where(and(
         gte(transactions.transactionDate, startDate),
         lt(transactions.transactionDate, endExclusive.toISOString().slice(0, 10)),
-        sql`not exists (select 1 from ${transactionLinks} where ${transactionLinks.fromTransactionId} = ${transactions.id} and ${transactionLinks.linkType} = 'funds' and ${transactionLinks.status} = 'confirmed')`,
-        sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})`,
+        ...cashFlowScopeConditions(),
       ))
       .groupBy(transactions.currencyCode, periodExpression)
       .orderBy(transactions.currencyCode, periodExpression);

@@ -20,7 +20,7 @@ type ImportPaths = {
 
 export async function startWatchedImports({
   repository,
-  rootPath = resolve(process.cwd(), "imports"),
+  rootPath = process.env.IMPORTS_DIR ?? resolve(process.env.DATA_DIR ?? resolve(process.cwd(), "data"), "imports"),
   logger = console,
   afterProcessedImport,
 }: WatchedImportsOptions) {

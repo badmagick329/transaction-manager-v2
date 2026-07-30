@@ -4,7 +4,8 @@ import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { schema } from "./schema";
 
-const defaultDatabasePath = resolve(process.cwd(), "data", "app.db");
+const dataDirectory = process.env.DATA_DIR ?? resolve(process.cwd(), "data");
+const defaultDatabasePath = process.env.DATABASE_PATH ?? resolve(dataDirectory, "app.db");
 
 export function createDb(databasePath = defaultDatabasePath) {
   mkdirSync(dirname(databasePath), { recursive: true });

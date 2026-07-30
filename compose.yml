@@ -1,0 +1,20 @@
+services:
+  transaction-manager:
+    build: .
+    environment:
+      PORT: ${PORT:-3000}
+      HOST: 0.0.0.0
+      DATA_DIR: ${DATA_DIR:-/app/data}
+      DATABASE_PATH: ${DATABASE_PATH:-/app/data/app.db}
+      IMPORTS_DIR: ${IMPORTS_DIR:-/app/data/imports}
+    ports:
+      - "${HOST_PORT:-4121}:${PORT:-3000}"
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:' + (process.env.PORT || 3000) + '/api/health').then(response => { if (!response.ok) process.exit(1) })"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

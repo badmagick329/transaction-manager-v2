@@ -32,6 +32,8 @@ export async function startApp() {
   await startWatchedImports({ repository: new DrizzleImportRepository(db), afterProcessedImport: reconciliation.proposeLinks });
 
   const server = serve({
+    hostname: process.env.HOST ?? "0.0.0.0",
+    port: Number(process.env.PORT ?? 3000),
     routes,
     development: process.env.NODE_ENV !== "production" && {
       hmr: true,

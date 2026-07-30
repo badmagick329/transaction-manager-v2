@@ -38,11 +38,3 @@ notes/*
 # local finance runtime state
 data/*
 !data/.gitkeep
-imports/incoming/*
-!imports/incoming/.gitkeep
-imports/processing/*
-!imports/processing/.gitkeep
-imports/processed/*
-!imports/processed/.gitkeep
-imports/failed/*
-!imports/failed/.gitkeep

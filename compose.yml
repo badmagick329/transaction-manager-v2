@@ -8,7 +8,7 @@ services:
       DATABASE_PATH: ${DATABASE_PATH:-/app/data/app.db}
       IMPORTS_DIR: ${IMPORTS_DIR:-/app/data/imports}
     ports:
-      - "${HOST_PORT:-4121}:${PORT:-3000}"
+      - "${HOST_PORT:-3000}:${PORT:-3000}"
     volumes:
       - ./data:/app/data
     restart: unless-stopped

@@ -2,7 +2,7 @@
 
 ## Home server deployment
 
-Copy `.env.example` to `.env` to customize deployment settings. By default, the app is available on port `4121` on your LAN and Tailscale network. It listens on `0.0.0.0` inside the container; this Compose configuration does not add public ingress.
+Copy `.env.example` to `.env` to customize deployment settings. `HOST_PORT` selects the port exposed on your LAN and Tailscale network. The app listens on `0.0.0.0` inside the container; this Compose configuration does not add public ingress.
 
 ```bash
 docker compose up -d --build
@@ -10,9 +10,17 @@ docker compose logs -f
 docker compose down
 ```
 
-No environment variables are required: `HOST_PORT` defaults to `4121`, while `PORT`, `DATA_DIR`, `DATABASE_PATH`, and `IMPORTS_DIR` have working defaults in `.env.example` and normally should remain unchanged.
+No environment variables are required: `HOST_PORT`, `PORT`, `DATA_DIR`, `DATABASE_PATH`, and `IMPORTS_DIR` have working defaults in `.env.example` and normally should remain unchanged.
 
 All mutable state is stored in `./data`, including the SQLite database at `./data/app.db` (and its SQLite WAL files) and watched import files under `./data/imports/{incoming,processing,processed,failed}`. New JSON imports should be placed in `./data/imports/incoming`.
+
+To safely upload generated standard-import JSON files from your main PC, use:
+
+```bash
+bun scripts/upload-imports-to-server.mjs --host <ssh-host> notes/temp_files/example.json
+```
+
+The script validates the JSON, transfers it over SSH under a temporary non-watched name, and atomically places it in the watched `incoming` directory. Set `IMPORT_SERVER` instead of passing `--host` each time if preferred.
 
 Migrations run automatically each time the app starts. On first run, the database and import directories are created automatically.
 

@@ -9,8 +9,10 @@ type CreateHttpRoutesOptions = {
   queries: ReturnType<typeof createDashboardQueries>;
   classifications: ReturnType<typeof createClassificationActions>;
   reconciliation: ReturnType<typeof createPayPalPaymentReconciliation>;
-  indexHtml: unknown;
 };
+
+type RequestHandler = (request: Request) => Response | Promise<Response>;
+type HttpRoute = Partial<Record<"GET" | "POST", RequestHandler>>;
 
 const saveRuleSchema = z.object({
   sourceId: z.number().int().positive(),
@@ -82,10 +84,8 @@ function parseTransactionFilters(url: URL): TransactionFilters | null {
   };
 }
 
-export function createHttpRoutes({ queries, classifications, reconciliation, indexHtml }: CreateHttpRoutesOptions) {
+export function createHttpRoutes({ queries, classifications, reconciliation }: CreateHttpRoutesOptions) {
   return {
-    "/*": indexHtml,
-
     "/api/health": {
       async GET() {
         return Response.json({
@@ -228,5 +228,5 @@ export function createHttpRoutes({ queries, classifications, reconciliation, ind
         }
       },
     },
-  };
+  } satisfies Record<string, HttpRoute>;
 }

@@ -1,7 +1,6 @@
 import { serve } from "bun";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve } from "node:path";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import indexHtml from "./index.html";
 import { createDashboardQueries } from "./app/use-cases/query-dashboard";
 import { createClassificationActions } from "./app/use-cases/classify-transactions";
 import { createPayPalPaymentReconciliation } from "./app/use-cases/reconcile-paypal-payments";
@@ -24,7 +23,6 @@ export async function startApp() {
     queries,
     classifications,
     reconciliation,
-    indexHtml,
   });
 
   await classificationRepository.ensureTrading212DefaultRules();
@@ -34,12 +32,29 @@ export async function startApp() {
   const server = serve({
     hostname: process.env.HOST ?? "0.0.0.0",
     port: Number(process.env.PORT ?? 3000),
-    routes,
-    development: process.env.NODE_ENV !== "production" && {
-      hmr: true,
-      console: true,
+    async fetch(request) {
+      const url = new URL(request.url);
+      const handler = routes[url.pathname]?.[request.method as "GET" | "POST"];
+      if (handler) return handler(request);
+      if (url.pathname.startsWith("/api/")) return new Response("Not found", { status: 404 });
+
+      return serveFrontend(url.pathname);
     },
   });
 
   return server;
+}
+
+const distDirectory = resolve(process.cwd(), "dist");
+
+async function serveFrontend(pathname: string) {
+  const assetPath = pathname === "/" ? "index.html" : decodeURIComponent(pathname).replace(/^\/+/, "");
+  const filePath = resolve(distDirectory, assetPath);
+  const pathRelativeToDist = relative(distDirectory, filePath);
+  if (pathRelativeToDist.startsWith("..") || isAbsolute(pathRelativeToDist)) return new Response("Forbidden", { status: 403 });
+
+  const file = Bun.file(filePath);
+  if (await file.exists()) return new Response(file);
+  if (!assetPath.includes(".")) return new Response(Bun.file(resolve(distDirectory, "index.html")));
+  return new Response("Not found", { status: 404 });
 }

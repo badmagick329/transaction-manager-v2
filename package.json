@@ -9,6 +9,7 @@
     "dev": "bun --hot src/index.tsx",
     "start": "NODE_ENV=production bun src/index.tsx",
     "build": "bun run build.ts",
+    "deploy": "bun run scripts/deploy.mjs",
     "db:generate": "drizzle-kit generate",
     "db:correct-hsbc-direct-debits": "bun run src/infrastructure/db/run-hsbc-direct-debit-correction.ts",
     "db:studio": "drizzle-kit studio"

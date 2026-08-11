@@ -17,6 +17,10 @@
 - Assume I already have servers running.
 - If you need to validate something, prefer unit tests, typecheck, lint, or reasoning from code.
 
+## Statement Imports
+
+- When asked to parse a financial statement, follow `notes/project_notes/statement_import_workflow.md`.
+
 ## Response Discipline
 
 Keep answers tightly scoped to the user's actual question.

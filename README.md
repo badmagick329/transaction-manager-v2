@@ -12,6 +12,16 @@ docker compose down
 
 No environment variables are required: `HOST_PORT`, `PORT`, `DATA_DIR`, `DATABASE_PATH`, and `IMPORTS_DIR` have working defaults in `.env.example` and normally should remain unchanged.
 
+## Deploy
+
+Copy `.env.deploy.example` to `.env.deploy` and fill in the server connection and application-directory settings. The optional health URL is requested from the server after deployment.
+
+```sh
+bun run deploy
+```
+
+The deploy command connects over SSH, fast-forwards the server checkout, rebuilds and restarts Compose, then shows service status. It leaves the mounted `data` directory intact, preserving SQLite and imported files.
+
 All mutable state is stored in `./data`, including the SQLite database at `./data/app.db` (and its SQLite WAL files) and watched import files under `./data/imports/{incoming,processing,processed,failed}`. New JSON imports should be placed in `./data/imports/incoming`.
 
 To safely upload generated standard-import JSON files from your main PC, use:

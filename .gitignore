@@ -4,6 +4,7 @@ node_modules
 # output
 out
 dist
+tmp/
 *.tgz
 
 # code coverage
@@ -17,6 +18,7 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 
 # dotenv environment variable files
 .env
+.env.deploy
 .env.development.local
 .env.test.local
 .env.production.local

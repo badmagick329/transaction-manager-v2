@@ -36,7 +36,7 @@ if (deployConfig.DEPLOY_SSH_PORT) sshArgs.push("-p", deployConfig.DEPLOY_SSH_POR
 const remoteScript = String.raw`
 set -eu
 app_dir="$1"
-health_url="$2"
+health_url="${2:-}"
 
 cd -- "$app_dir"
 git pull --ff-only
@@ -60,4 +60,4 @@ const deployProcess = Bun.spawn(
 );
 
 const exitCode = await deployProcess.exited;
-if (exitCode !== 0) Bun.exit(exitCode);
+if (exitCode !== 0) process.exit(exitCode);

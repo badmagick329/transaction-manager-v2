@@ -13,7 +13,7 @@ import type {
 } from "../../app/ports/dashboard-query-repository";
 import { exclusiveEndDate } from "../../app/date-range";
 import type { AppDatabase } from "./client";
-import { accounts, cashFlowExclusions, importBatches, sources, transactionLinks, transactions } from "./schema";
+import { accounts, cashFlowExclusions, importBatches, sources, tagRules, tags, transactionLinks, transactionManualTags, transactionTagRuleMatches, transactions } from "./schema";
 
 function periodsInRange(startDate: string, endDate: string, granularity: "month" | "year") {
   const startYear = Number(startDate.slice(0, 4));
@@ -41,6 +41,14 @@ function periodLabel(period: string, granularity: "month" | "year") {
 }
 
 function transactionFilterConditions(filters?: TransactionFilters): SQL[] {
+  const selectedTagCondition = filters?.tagIds?.length ? or(
+    sql`exists (select 1 from ${transactionManualTags} where ${transactionManualTags.transactionId} = ${transactions.id} and ${inArray(transactionManualTags.tagId, filters.tagIds)})`,
+    sql`exists (select 1 from ${transactionTagRuleMatches} inner join ${tagRules} on ${tagRules.id} = ${transactionTagRuleMatches.tagRuleId} where ${transactionTagRuleMatches.transactionId} = ${transactions.id} and ${inArray(tagRules.tagId, filters.tagIds)})`,
+  ) : undefined;
+  const untaggedCondition = filters?.untagged ? and(
+    sql`not exists (select 1 from ${transactionManualTags} where ${transactionManualTags.transactionId} = ${transactions.id})`,
+    sql`not exists (select 1 from ${transactionTagRuleMatches} where ${transactionTagRuleMatches.transactionId} = ${transactions.id})`,
+  ) : undefined;
   return [
     filters?.economicType ? eq(transactions.economicType, filters.economicType) : undefined,
     filters?.sourceId ? eq(transactions.sourceId, filters.sourceId) : undefined,
@@ -56,6 +64,7 @@ function transactionFilterConditions(filters?: TransactionFilters): SQL[] {
     filters?.hideTransfers ? sql`${transactions.economicType} <> 'transfer'` : undefined,
     filters?.cashFlowExcluded === true ? sql`exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
     filters?.cashFlowExcluded === false ? sql`not exists (select 1 from ${cashFlowExclusions} where ${cashFlowExclusions.transactionId} = ${transactions.id})` : undefined,
+    selectedTagCondition && untaggedCondition ? or(selectedTagCondition, untaggedCondition) : selectedTagCondition ?? untaggedCondition,
   ].filter((condition): condition is SQL => condition !== undefined);
 }
 
@@ -121,22 +130,43 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
     const transactionRows = options?.limit ? await orderedQuery.limit(options.limit).offset(options.offset ?? 0) : await orderedQuery;
     if (transactionRows.length === 0) return [];
     const transactionIds = transactionRows.map(transaction => transaction.id);
-    const [links, exclusions] = await Promise.all([
+    const [links, exclusions, manualTagRows, automaticTagRows] = await Promise.all([
       this.db.select().from(transactionLinks).where(and(
         eq(transactionLinks.linkType, "funds"),
         eq(transactionLinks.createdBy, "system_rule"),
         or(inArray(transactionLinks.fromTransactionId, transactionIds), inArray(transactionLinks.toTransactionId, transactionIds)),
       )),
       this.db.select({ transactionId: cashFlowExclusions.transactionId }).from(cashFlowExclusions).where(inArray(cashFlowExclusions.transactionId, transactionIds)),
+      this.db.select({ transactionId: transactionManualTags.transactionId, tagId: tags.id, tagName: tags.name })
+        .from(transactionManualTags)
+        .innerJoin(tags, eq(transactionManualTags.tagId, tags.id))
+        .where(inArray(transactionManualTags.transactionId, transactionIds)),
+      this.db.select({ transactionId: transactionTagRuleMatches.transactionId, tagId: tags.id, tagName: tags.name })
+        .from(transactionTagRuleMatches)
+        .innerJoin(tagRules, eq(transactionTagRuleMatches.tagRuleId, tagRules.id))
+        .innerJoin(tags, eq(tagRules.tagId, tags.id))
+        .where(inArray(transactionTagRuleMatches.transactionId, transactionIds)),
     ]);
     const excludedTransactionIds = new Set(exclusions.map(exclusion => exclusion.transactionId));
+    const tagsByTransaction = new Map<number, Map<number, { id: number; name: string; manual: boolean; automatic: boolean }>>();
+    for (const assignment of manualTagRows) {
+      const transactionTags = tagsByTransaction.get(assignment.transactionId) ?? new Map();
+      transactionTags.set(assignment.tagId, { id: assignment.tagId, name: assignment.tagName, manual: true, automatic: transactionTags.get(assignment.tagId)?.automatic ?? false });
+      tagsByTransaction.set(assignment.transactionId, transactionTags);
+    }
+    for (const assignment of automaticTagRows) {
+      const transactionTags = tagsByTransaction.get(assignment.transactionId) ?? new Map();
+      transactionTags.set(assignment.tagId, { id: assignment.tagId, name: assignment.tagName, manual: transactionTags.get(assignment.tagId)?.manual ?? false, automatic: true });
+      tagsByTransaction.set(assignment.transactionId, transactionTags);
+    }
     return transactionRows.map(transaction => {
       const fromLink = links.find(link => link.fromTransactionId === transaction.id && link.status !== "rejected");
       const toLink = links.find(link => link.toTransactionId === transaction.id && link.status !== "rejected");
       const reconciliationLabel = fromLink
         ? fromLink.status === "confirmed" ? "Linked to PayPal purchase" : "PayPal match pending"
         : toLink ? toLink.status === "confirmed" ? "Funded by HSBC PayPal payment" : "HSBC match pending" : null;
-      return { ...transaction, reconciliationLabel, isExcludedFromCashFlow: excludedTransactionIds.has(transaction.id) };
+      const transactionTags = [...(tagsByTransaction.get(transaction.id)?.values() ?? [])].sort((left, right) => left.name.localeCompare(right.name));
+      return { ...transaction, reconciliationLabel, isExcludedFromCashFlow: excludedTransactionIds.has(transaction.id), tags: transactionTags };
     });
   }
 

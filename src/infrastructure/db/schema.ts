@@ -186,6 +186,87 @@ export const classificationRules = sqliteTable(
   }),
 );
 
+export const tags = sqliteTable(
+  "tags",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    name: text("name").notNull(),
+    normalizedName: text("normalized_name").notNull(),
+    createdAt: text("created_at").notNull().$defaultFn(isoNow),
+    updatedAt: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  table => ({
+    normalizedNameUnique: uniqueIndex("tags_normalized_name_unique").on(table.normalizedName),
+  }),
+);
+
+export const tagRules = sqliteTable(
+  "tag_rules",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    tagId: integer("tag_id")
+      .notNull()
+      .references(() => tags.id),
+    sourceId: integer("source_id")
+      .notNull()
+      .references(() => sources.id),
+    normalizedDescription: text("normalized_description").notNull(),
+    matchMode: text("match_mode", { enum: classificationMatchModes }).notNull().default("exact"),
+    direction: text("direction", { enum: economicDirections }).notNull(),
+    createdAt: text("created_at").notNull().$defaultFn(isoNow),
+    updatedAt: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  table => ({
+    tagIdx: index("tag_rules_tag_idx").on(table.tagId),
+    sourceIdx: index("tag_rules_source_idx").on(table.sourceId),
+    matchUnique: uniqueIndex("tag_rules_match_unique").on(
+      table.tagId,
+      table.sourceId,
+      table.direction,
+      table.matchMode,
+      table.normalizedDescription,
+    ),
+  }),
+);
+
+export const transactionManualTags = sqliteTable(
+  "transaction_manual_tags",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    transactionId: integer("transaction_id")
+      .notNull()
+      .references(() => transactions.id),
+    tagId: integer("tag_id")
+      .notNull()
+      .references(() => tags.id),
+    createdAt: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  table => ({
+    transactionIdx: index("transaction_manual_tags_transaction_idx").on(table.transactionId),
+    tagIdx: index("transaction_manual_tags_tag_idx").on(table.tagId),
+    assignmentUnique: uniqueIndex("transaction_manual_tags_assignment_unique").on(table.transactionId, table.tagId),
+  }),
+);
+
+export const transactionTagRuleMatches = sqliteTable(
+  "transaction_tag_rule_matches",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    transactionId: integer("transaction_id")
+      .notNull()
+      .references(() => transactions.id),
+    tagRuleId: integer("tag_rule_id")
+      .notNull()
+      .references(() => tagRules.id),
+    createdAt: text("created_at").notNull().$defaultFn(isoNow),
+  },
+  table => ({
+    transactionIdx: index("transaction_tag_rule_matches_transaction_idx").on(table.transactionId),
+    ruleIdx: index("transaction_tag_rule_matches_rule_idx").on(table.tagRuleId),
+    matchUnique: uniqueIndex("transaction_tag_rule_matches_unique").on(table.transactionId, table.tagRuleId),
+  }),
+);
+
 export const economicClassificationAudits = sqliteTable(
   "economic_classification_audits",
   {
@@ -252,6 +333,10 @@ export const schema = {
   importAttempts,
   transactionTypeCorrections,
   classificationRules,
+  tags,
+  tagRules,
+  transactionManualTags,
+  transactionTagRuleMatches,
   economicClassificationAudits,
   rawRecords,
   transactions,

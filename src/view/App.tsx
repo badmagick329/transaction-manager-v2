@@ -3,10 +3,12 @@ import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, T
 import "../index.css";
 import { ClassificationPage } from "./ClassificationPage";
 import { ReconciliationPage } from "./ReconciliationPage";
+import { TagsPage } from "./TagsPage";
+import { TagPicker } from "./TagPicker";
 import { DatePicker } from "../components/ui/date-picker";
 import { Checkbox } from "../components/ui/checkbox";
 import { economicTypeOptions, economicTypeOptionsForDirection, formatCompactMoney, formatMoney, formatTransactionDate, matchModeOptions, titleCase } from "./formatters";
-import type { Account, CashFlowSummary, CashFlowTrend, ClassificationMatchMode, ClassificationReviewGroup, ClassificationRule, EconomicDirection, EconomicType, LatestImport, PayPalPaymentLink, Transaction, TransactionFilters, TransactionSummary } from "./types";
+import type { Account, CashFlowSummary, CashFlowTrend, ClassificationMatchMode, ClassificationReviewGroup, ClassificationRule, EconomicDirection, EconomicType, LatestImport, PayPalPaymentLink, Tag, TagRule, TagRuleDraft, Transaction, TransactionFilters, TransactionSummary } from "./types";
 
 /*type LatestImport = {
   fileName: string;
@@ -169,6 +171,8 @@ function isCompleteAmount(value: string) { return /^-?\d+(?:\.\d{1,2})?$/.test(v
 function currentMonthRange() { const now = new Date(); return { startDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))), endDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0))) }; }
 function since2024Range() { return { startDate: "2024-01-01", endDate: toDateInput(new Date()) }; }
 function presetDateRange(preset: "since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date") { if (preset === "since_2024") return since2024Range(); if (preset === "month") return currentMonthRange(); const end = new Date(); const start = new Date(end); if (preset === "year_to_date") start.setUTCMonth(0, 1); else start.setUTCDate(start.getUTCDate() - (preset === "last_30_days" ? 29 : 89)); return { startDate: toDateInput(start), endDate: toDateInput(end) }; }
+const emptyTagRuleDraft: TagRuleDraft = { tagId: "", sourceId: "", description: "", matchMode: "exact", direction: "outflow" };
+const emptyTransactionFilters: TransactionFilters = { sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "", hideTrading212InterestCashbackAndDividends: false, hideTransfers: false, tagIds: [], untagged: false };
 
 export function App() {
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
@@ -177,7 +181,7 @@ export function App() {
   const [cashFlowExclusionCount, setCashFlowExclusionCount] = useState(0);
   const [showingCashFlowExclusions, setShowingCashFlowExclusions] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [page, setPage] = useState<"dashboard" | "classification" | "reconciliation" | "transactions">("dashboard");
+  const [page, setPage] = useState<"dashboard" | "classification" | "reconciliation" | "tags" | "transactions">("dashboard");
   const [dateRange, setDateRange] = useState(since2024Range);
   const [datePreset, setDatePreset] = useState<"since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date" | "custom">("since_2024");
   const [cashFlowSummary, setCashFlowSummary] = useState<CashFlowSummary[] | null>(null);
@@ -186,6 +190,9 @@ export function App() {
   const [reviewGroups, setReviewGroups] = useState<ClassificationReviewGroup[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
   const [payPalLinks, setPayPalLinks] = useState<PayPalPaymentLink[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [tagRules, setTagRules] = useState<TagRule[]>([]);
+  const [tagRuleDraft, setTagRuleDraft] = useState<TagRuleDraft>(emptyTagRuleDraft);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
@@ -193,7 +200,7 @@ export function App() {
   const [hasMoreTransactions, setHasMoreTransactions] = useState(false);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
   const [transactionFilter, setTransactionFilter] = useState<"all" | EconomicType>("all");
-  const [transactionFilters, setTransactionFilters] = useState<TransactionFilters>({ sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "", hideTrading212InterestCashbackAndDividends: false, hideTransfers: false });
+  const [transactionFilters, setTransactionFilters] = useState<TransactionFilters>(emptyTransactionFilters);
   const [visibleReviewGroupCount, setVisibleReviewGroupCount] = useState(classificationReviewPageSize);
   const remainingClassificationCount = reviewGroups.reduce((total, group) => total + group.transactionCount, 0);
   const sources = [...new Map(accounts.filter(account => account.sourceId !== null).map(account => [account.sourceId!, account.sourceName ?? "Unknown source"])).entries()];
@@ -214,6 +221,13 @@ export function App() {
     const response = await fetch("/api/reconciliation/paypal");
     if (!response.ok) throw new Error("Unable to load PayPal matches.");
     setPayPalLinks(await response.json());
+  };
+
+  const loadTags = async () => {
+    const [tagsResponse, rulesResponse] = await Promise.all([fetch("/api/tags"), fetch("/api/tag-rules")]);
+    if (!tagsResponse.ok || !rulesResponse.ok) throw new Error("Unable to load tags.");
+    setTags(await tagsResponse.json());
+    setTagRules(await rulesResponse.json());
   };
 
   const loadCashFlowSummary = async ({ startDate, endDate }: { startDate: string; endDate: string }) => {
@@ -259,6 +273,8 @@ export function App() {
       if (filters.endDate) query.set("endDate", filters.endDate);
       if (filters.hideTrading212InterestCashbackAndDividends) query.set("hideTrading212InterestCashbackAndDividends", "true");
       if (filters.hideTransfers) query.set("hideTransfers", "true");
+      filters.tagIds.forEach(tagId => query.append("tagId", tagId));
+      if (filters.untagged) query.set("untagged", "true");
       if (showExcluded) query.set("cashFlowExcluded", "true");
       const summaryQuery = new URLSearchParams(query);
       if (!showExcluded) summaryQuery.set("cashFlowExcluded", "false");
@@ -288,6 +304,7 @@ export function App() {
           loadClassifications(),
           loadPayPalLinks(),
           loadCashFlowExclusionCount(),
+          loadTags(),
         ]);
         if (!importResponse.ok) throw new Error("Unable to load the finance workspace.");
         setLatestImport(await importResponse.json());
@@ -341,6 +358,40 @@ export function App() {
     } finally {
       setSavingKey(null);
     }
+  };
+
+  const tagRequest = async (path: string, body: unknown, key: string) => {
+    setSavingKey(key);
+    setError(null);
+    try {
+      const response = await fetch(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const responseBody = await response.json();
+      if (!response.ok) throw new Error(responseBody.error ?? "Unable to update tags.");
+      await Promise.all([loadTags(), loadTransactions()]);
+      return responseBody;
+    } catch (tagError) {
+      setError(tagError instanceof Error ? tagError.message : "Unable to update tags.");
+      throw tagError;
+    } finally {
+      setSavingKey(null);
+    }
+  };
+
+  const createTag = async (name: string) => { await tagRequest("/api/tags", { name }, "create-tag"); };
+  const renameTag = async (tagId: number, name: string) => { await tagRequest("/api/tags/rename", { tagId, name }, `rename-tag-${tagId}`); };
+  const deleteTag = (tag: Tag) => { if (confirm(`Delete “${tag.name}” everywhere, including its rules and assignments?`)) void tagRequest("/api/tags/delete", { tagId: tag.id }, `delete-tag-${tag.id}`); };
+  const setManualTag = (transactionId: number, tagId: number, assigned: boolean) => { void tagRequest("/api/transactions/tag", { transactionId, tagId, assigned }, `tag-${transactionId}-${tagId}`); };
+  const createAndAssignTag = async (transactionId: number, name: string) => {
+    const created = await tagRequest("/api/tags", { name }, "create-tag") as Tag;
+    await tagRequest("/api/transactions/tag", { transactionId, tagId: created.id, assigned: true }, `tag-${transactionId}-${created.id}`);
+  };
+  const saveTagRule = (draft: TagRuleDraft) => {
+    void tagRequest("/api/tag-rules", { ruleId: draft.ruleId, tagId: Number(draft.tagId), sourceId: Number(draft.sourceId), description: draft.matchMode === "all" ? "*" : draft.description, matchMode: draft.matchMode, direction: draft.direction }, "save-tag-rule").then(() => setTagRuleDraft(emptyTagRuleDraft));
+  };
+  const deleteTagRule = (rule: TagRule) => { if (confirm(`Delete the automatic “${rule.tagName}” rule?`)) void tagRequest("/api/tag-rules/delete", { ruleId: rule.id }, `delete-tag-rule-${rule.id}`); };
+  const createRuleFromTransaction = (transaction: Transaction) => {
+    setTagRuleDraft({ tagId: transaction.tags[0] ? String(transaction.tags[0].id) : "", sourceId: String(transaction.sourceId), description: transaction.description, matchMode: "exact", direction: transaction.amountMinor < 0 ? "outflow" : "inflow" });
+    setPage("tags");
   };
 
   const saveRule = async (input: { sourceId: number; description: string; direction: EconomicDirection; matchMode: ClassificationMatchMode; economicType: EconomicType }, key: string) => {
@@ -418,7 +469,7 @@ export function App() {
             Put completed parser JSON files into <code className="rounded bg-neutral-800 px-1.5 py-0.5">imports/incoming</code>.
           </p>
           <nav className="mt-5 flex flex-wrap gap-2" aria-label="Workspace pages">
-            {(["dashboard", "classification", "reconciliation", "transactions"] as const).map(item => (
+            {(["dashboard", "classification", "reconciliation", "tags", "transactions"] as const).map(item => (
               <button
                 key={item}
                 className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${page === item ? "bg-neutral-100 text-neutral-950" : "border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:bg-neutral-900"}`}
@@ -677,6 +728,7 @@ export function App() {
         */}
 
         {page === "reconciliation" ? <ReconciliationPage loading={loading} links={payPalLinks} savingKey={savingKey} updateLink={(linkId, status) => void updatePayPalLink(linkId, status)} /> : null}
+        {page === "tags" ? <TagsPage tags={tags} rules={tagRules} accounts={accounts} loading={loading} savingKey={savingKey} ruleDraft={tagRuleDraft} setRuleDraft={setTagRuleDraft} createTag={createTag} renameTag={renameTag} deleteTag={deleteTag} saveRule={saveTagRule} deleteRule={deleteTagRule} /> : null}
         {/*
         <section className={page === "reconciliation" ? "mt-8" : "hidden"}>
           <div>
@@ -732,13 +784,14 @@ export function App() {
             <label className="text-xs text-neutral-400">Amount to<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="text" inputMode="decimal" value={transactionFilters.maxAmount} onChange={event => { if (isAmountInput(event.target.value)) setTransactionFilters(current => ({ ...current, maxAmount: event.target.value })); }} placeholder="e.g. 200.00" /></label>
             <label className="text-xs text-neutral-400">From<DatePicker value={transactionFilters.startDate} onChange={value => setTransactionFilters(current => ({ ...current, startDate: value }))} placeholder="Select start date" /></label>
             <label className="text-xs text-neutral-400">To<DatePicker value={transactionFilters.endDate} onChange={value => setTransactionFilters(current => ({ ...current, endDate: value }))} placeholder="Select end date" /></label>
+            <fieldset className="text-xs text-neutral-400 sm:col-span-2"><legend>Tags · match any</legend><div className="mt-1 flex min-h-9 flex-wrap gap-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-2">{tags.map(tag => <label key={tag.id} className="flex items-center gap-1.5 text-sm text-neutral-300"><Checkbox checked={transactionFilters.tagIds.includes(String(tag.id))} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, tagIds: checked === true ? [...current.tagIds, String(tag.id)] : current.tagIds.filter(tagId => tagId !== String(tag.id)) }))} />{tag.name}</label>)}<label className="flex items-center gap-1.5 text-sm text-neutral-300"><Checkbox checked={transactionFilters.untagged} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, untagged: checked === true }))} />Untagged</label>{tags.length === 0 ? <span className="text-sm text-neutral-500">No tags created</span> : null}</div></fieldset>
             </div>
             <div className="mt-4 flex flex-col gap-3 border-t border-neutral-800 pt-4 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
                 <label className="flex items-center gap-2 text-sm text-neutral-300"><Checkbox checked={transactionFilters.hideTrading212InterestCashbackAndDividends} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, hideTrading212InterestCashbackAndDividends: checked === true }))} />Hide Trading 212 interest, cashback, and dividends</label>
                 <label className="flex items-center gap-2 text-sm text-neutral-300"><Checkbox checked={transactionFilters.hideTransfers} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, hideTransfers: checked === true }))} />Hide transfers</label>
               </div>
-              <button className="w-fit rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800" onClick={() => { setTransactionFilter("all"); setTransactionFilters({ sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "", hideTrading212InterestCashbackAndDividends: false, hideTransfers: false }); }}>Clear filters</button>
+              <button className="w-fit rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800" onClick={() => { setTransactionFilter("all"); setTransactionFilters(emptyTransactionFilters); }}>Clear filters</button>
             </div>
           </div>
           <p className="mt-2 text-xs text-neutral-500">Amount filters use signed values: negative for money out and positive for money in.</p>
@@ -770,7 +823,7 @@ export function App() {
                   {transactions.map(transaction => (
                     <tr key={transaction.id} className="group bg-neutral-950/30">
                       <td className="whitespace-nowrap px-4 py-3 text-neutral-400">{formatTransactionDate(transaction.transactionDate)}</td>
-                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}</td>
+                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></td>
                       <td className="px-4 py-3 text-neutral-400">{transaction.accountName}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.transactionType)}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.economicType)}</td>

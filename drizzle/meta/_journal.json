@@ -64,6 +64,13 @@
       "when": 1785165524453,
       "tag": "0008_green_newton_destine",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1786532807567,
+      "tag": "0009_rich_lightspeed",
+      "breakpoints": true
     }
   ]
 }

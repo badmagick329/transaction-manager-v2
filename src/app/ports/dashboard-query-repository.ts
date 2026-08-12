@@ -23,6 +23,7 @@ export type TransactionListItem = {
   status: string;
   reconciliationLabel: string | null;
   isExcludedFromCashFlow: boolean;
+  tags: Array<{ id: number; name: string; manual: boolean; automatic: boolean }>;
 };
 
 export type TransactionSummary = {
@@ -49,6 +50,8 @@ export type TransactionFilters = {
   hideTrading212InterestCashbackAndDividends?: boolean;
   hideTransfers?: boolean;
   cashFlowExcluded?: boolean;
+  tagIds?: number[];
+  untagged?: boolean;
 };
 
 export type TransactionListOptions = TransactionFilters & {

@@ -64,7 +64,7 @@ describe("watched bank imports", () => {
       } as ReturnType<typeof createDashboardQueries>,
       classifications: {} as never,
       reconciliation: {} as never,
-      indexHtml: null,
+      tagging: {} as never,
     });
     const query = "economicType=expense&sourceId=2&accountId=3&currencyCode=GBP&transactionType=purchase&description=Coffee&minAmount=-12.34&maxAmount=56.78&startDate=2026-01-01&endDate=2026-01-31&hideTrading212InterestCashbackAndDividends=true&hideTransfers=false&cashFlowExcluded=false";
     const listResponse = await routes["/api/transactions"].GET(new Request(`http://localhost/api/transactions?${query}`));

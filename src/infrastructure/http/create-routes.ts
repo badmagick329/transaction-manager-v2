@@ -1,6 +1,7 @@
 import type { createDashboardQueries } from "../../app/use-cases/query-dashboard";
 import type { createClassificationActions } from "../../app/use-cases/classify-transactions";
 import type { createPayPalPaymentReconciliation } from "../../app/use-cases/reconcile-paypal-payments";
+import type { createTaggingActions } from "../../app/use-cases/manage-tags";
 import { classificationMatchModes, economicDirections, economicTypes, linkStatuses, transactionTypes } from "../../core/finance/constants";
 import type { TransactionFilters } from "../../app/ports/dashboard-query-repository";
 import { z } from "zod";
@@ -9,6 +10,7 @@ type CreateHttpRoutesOptions = {
   queries: ReturnType<typeof createDashboardQueries>;
   classifications: ReturnType<typeof createClassificationActions>;
   reconciliation: ReturnType<typeof createPayPalPaymentReconciliation>;
+  tagging: ReturnType<typeof createTaggingActions>;
 };
 
 type RequestHandler = (request: Request) => Response | Promise<Response>;
@@ -25,6 +27,20 @@ const saveRuleSchema = z.object({
 const deleteRuleSchema = z.object({ ruleId: z.number().int().positive() });
 const updatePayPalLinkSchema = z.object({ linkId: z.number().int().positive(), status: z.enum(linkStatuses) });
 const updateCashFlowExclusionSchema = z.object({ transactionId: z.number().int().positive(), excluded: z.boolean() });
+const tagNameSchema = z.string().max(50);
+const createTagSchema = z.object({ name: tagNameSchema });
+const renameTagSchema = z.object({ tagId: z.number().int().positive(), name: tagNameSchema });
+const deleteTagSchema = z.object({ tagId: z.number().int().positive() });
+const setManualTagSchema = z.object({ transactionId: z.number().int().positive(), tagId: z.number().int().positive(), assigned: z.boolean() });
+const saveTagRuleSchema = z.object({
+  ruleId: z.number().int().positive().optional(),
+  tagId: z.number().int().positive(),
+  sourceId: z.number().int().positive(),
+  description: z.string().max(200),
+  matchMode: z.enum(classificationMatchModes),
+  direction: z.enum(economicDirections),
+});
+const deleteTagRuleSchema = z.object({ ruleId: z.number().int().positive() });
 
 async function parseBody<T extends z.ZodType>(request: Request, schema: T): Promise<z.output<T>> {
   return schema.parse(await request.json());
@@ -44,10 +60,13 @@ function parseTransactionFilters(url: URL): TransactionFilters | null {
   const hideTrading212InterestCashbackAndDividendsText = url.searchParams.get("hideTrading212InterestCashbackAndDividends");
   const hideTransfersText = url.searchParams.get("hideTransfers");
   const cashFlowExcludedText = url.searchParams.get("cashFlowExcluded");
+  const tagIdTexts = url.searchParams.getAll("tagId");
+  const untaggedText = url.searchParams.get("untagged");
   const sourceId = sourceIdText === null ? undefined : Number(sourceIdText);
   const accountId = accountIdText === null ? undefined : Number(accountIdText);
   const minAmountMinor = minAmountText === null ? undefined : Math.round(Number(minAmountText) * 100);
   const maxAmountMinor = maxAmountText === null ? undefined : Math.round(Number(maxAmountText) * 100);
+  const tagIds = tagIdTexts.map(Number);
 
   if (
     (economicType !== null && !economicTypes.includes(economicType as (typeof economicTypes)[number])) ||
@@ -65,6 +84,8 @@ function parseTransactionFilters(url: URL): TransactionFilters | null {
     (hideTrading212InterestCashbackAndDividendsText !== null && hideTrading212InterestCashbackAndDividendsText !== "true" && hideTrading212InterestCashbackAndDividendsText !== "false") ||
     (hideTransfersText !== null && hideTransfersText !== "true" && hideTransfersText !== "false") ||
     (cashFlowExcludedText !== null && cashFlowExcludedText !== "true" && cashFlowExcludedText !== "false")
+    || tagIds.some(tagId => !Number.isInteger(tagId) || tagId < 1)
+    || (untaggedText !== null && untaggedText !== "true" && untaggedText !== "false")
   ) return null;
 
   return {
@@ -81,10 +102,12 @@ function parseTransactionFilters(url: URL): TransactionFilters | null {
     hideTrading212InterestCashbackAndDividends: hideTrading212InterestCashbackAndDividendsText === "true",
     hideTransfers: hideTransfersText === "true",
     cashFlowExcluded: cashFlowExcludedText === "true" ? true : cashFlowExcludedText === "false" ? false : undefined,
+    ...(tagIds.length > 0 ? { tagIds: [...new Set(tagIds)] } : {}),
+    ...(untaggedText === "true" ? { untagged: true } : {}),
   };
 }
 
-export function createHttpRoutes({ queries, classifications, reconciliation }: CreateHttpRoutesOptions) {
+export function createHttpRoutes({ queries, classifications, reconciliation, tagging }: CreateHttpRoutesOptions) {
   return {
     "/api/health": {
       async GET() {
@@ -147,6 +170,79 @@ export function createHttpRoutes({ queries, classifications, reconciliation }: C
           return Response.json({ ok: true });
         } catch (error) {
           return Response.json({ error: error instanceof Error ? error.message : "Unable to update cash-flow exclusion." }, { status: 400 });
+        }
+      },
+    },
+
+    "/api/transactions/tag": {
+      async POST(request: Request) {
+        try {
+          const { transactionId, tagId, assigned } = await parseBody(request, setManualTagSchema);
+          await tagging.setManualTag(transactionId, tagId, assigned);
+          return Response.json({ ok: true });
+        } catch (error) {
+          return Response.json({ error: error instanceof Error ? error.message : "Unable to update transaction tag." }, { status: 400 });
+        }
+      },
+    },
+
+    "/api/tags": {
+      async GET() {
+        return Response.json(await tagging.listTags());
+      },
+      async POST(request: Request) {
+        try {
+          const { name } = await parseBody(request, createTagSchema);
+          return Response.json(await tagging.createTag(name));
+        } catch (error) {
+          return Response.json({ error: error instanceof Error ? error.message : "Unable to create tag." }, { status: 400 });
+        }
+      },
+    },
+
+    "/api/tags/rename": {
+      async POST(request: Request) {
+        try {
+          const { tagId, name } = await parseBody(request, renameTagSchema);
+          return Response.json(await tagging.renameTag(tagId, name));
+        } catch (error) {
+          return Response.json({ error: error instanceof Error ? error.message : "Unable to rename tag." }, { status: 400 });
+        }
+      },
+    },
+
+    "/api/tags/delete": {
+      async POST(request: Request) {
+        try {
+          const { tagId } = await parseBody(request, deleteTagSchema);
+          await tagging.deleteTag(tagId);
+          return Response.json({ ok: true });
+        } catch (error) {
+          return Response.json({ error: error instanceof Error ? error.message : "Unable to delete tag." }, { status: 400 });
+        }
+      },
+    },
+
+    "/api/tag-rules": {
+      async GET() {
+        return Response.json(await tagging.listRules());
+      },
+      async POST(request: Request) {
+        try {
+          return Response.json(await tagging.saveRule(await parseBody(request, saveTagRuleSchema)));
+        } catch (error) {
+          return Response.json({ error: error instanceof Error ? error.message : "Unable to save tag rule." }, { status: 400 });
+        }
+      },
+    },
+
+    "/api/tag-rules/delete": {
+      async POST(request: Request) {
+        try {
+          const { ruleId } = await parseBody(request, deleteTagRuleSchema);
+          return Response.json(await tagging.deleteRule(ruleId));
+        } catch (error) {
+          return Response.json({ error: error instanceof Error ? error.message : "Unable to delete tag rule." }, { status: 400 });
         }
       },
     },

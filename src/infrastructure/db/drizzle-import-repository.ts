@@ -4,6 +4,7 @@ import type { ImportBatchSummary, ImportRepository, ProcessedImportFile, Resolve
 import { createSourceRecordHash, resolveImportRecordAccounts } from "../../app/use-cases/import-standard-file";
 import type { AppDatabase } from "./client";
 import { ensureTrading212DefaultRules } from "./ensure-trading212-default-rules";
+import { applyTagRulesForTransactions } from "./drizzle-tagging-repository";
 import { accounts, classificationRules, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactions } from "./schema";
 
 const now = () => new Date().toISOString();
@@ -201,6 +202,7 @@ export class DrizzleImportRepository implements ImportRepository {
           .from(transactions)
           .where(and(eq(transactions.sourceId, source.id), inArray(transactions.sourceTransactionHash, recordsBatch.map(item => item.sourceRecordHash))));
         const transactionIdsByHash = new Map(transactionRows.map(transaction => [transaction.sourceTransactionHash, transaction.id]));
+        await applyTagRulesForTransactions(tx, source.id, transactionRows.map(transaction => transaction.id));
         const audits = recordsBatch.flatMap(({ sourceRecordHash, classificationRule, economicType }) => {
           const transactionId = transactionIdsByHash.get(sourceRecordHash);
           return economicType !== "unclassified" && transactionId ? [{

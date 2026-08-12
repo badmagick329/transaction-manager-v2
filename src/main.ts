@@ -4,11 +4,13 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { createDashboardQueries } from "./app/use-cases/query-dashboard";
 import { createClassificationActions } from "./app/use-cases/classify-transactions";
 import { createPayPalPaymentReconciliation } from "./app/use-cases/reconcile-paypal-payments";
+import { createTaggingActions } from "./app/use-cases/manage-tags";
 import { createDb } from "./infrastructure/db/client";
 import { DrizzleDashboardQueryRepository } from "./infrastructure/db/drizzle-dashboard-query-repository";
 import { DrizzleImportRepository } from "./infrastructure/db/drizzle-import-repository";
 import { DrizzleClassificationRepository } from "./infrastructure/db/drizzle-classification-repository";
 import { DrizzlePayPalReconciliationRepository } from "./infrastructure/db/drizzle-paypal-reconciliation-repository";
+import { DrizzleTaggingRepository } from "./infrastructure/db/drizzle-tagging-repository";
 import { createHttpRoutes } from "./infrastructure/http/create-routes";
 import { startWatchedImports } from "./infrastructure/imports/watched-imports";
 
@@ -19,10 +21,12 @@ export async function startApp() {
   const classificationRepository = new DrizzleClassificationRepository(db);
   const classifications = createClassificationActions(classificationRepository);
   const reconciliation = createPayPalPaymentReconciliation(new DrizzlePayPalReconciliationRepository(db));
+  const tagging = createTaggingActions(new DrizzleTaggingRepository(db));
   const routes = createHttpRoutes({
     queries,
     classifications,
     reconciliation,
+    tagging,
   });
 
   await classificationRepository.ensureTrading212DefaultRules();

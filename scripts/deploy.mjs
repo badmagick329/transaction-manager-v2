@@ -34,9 +34,10 @@ const sshArgs = ["ssh"];
 if (deployConfig.DEPLOY_SSH_PORT) sshArgs.push("-p", deployConfig.DEPLOY_SSH_PORT);
 
 const remoteScript = String.raw`
-set -eu
+set -e
 app_dir="$1"
-health_url="${2:-}"
+health_url="$2"
+set -u
 
 cd -- "$app_dir"
 git pull --ff-only

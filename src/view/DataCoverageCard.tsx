@@ -27,8 +27,8 @@ export function DataCoverageCard({
     if (!coverage) return;
     setDrafts(Object.fromEntries(coverage.accounts.map(account => [account.accountId, {
       required: account.required,
-      startDate: account.manualBaseline?.startDate ?? "",
-      endDate: account.manualBaseline?.endDate ?? "",
+      startDate: account.manualBaseline?.startDate ?? account.earliestTransactionDate?.slice(0, 10) ?? "",
+      endDate: account.manualBaseline?.endDate ?? account.latestTransactionDate?.slice(0, 10) ?? "",
     }])));
   }, [coverage]);
 
@@ -87,6 +87,7 @@ export function DataCoverageCard({
                         <button className="rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50" disabled={savingAccountId === account.accountId || baselineIncomplete || (draft.startDate !== "" && draft.startDate > draft.endDate)} onClick={() => onSave(account.accountId, draft)}>{savingAccountId === account.accountId ? "Saving…" : "Save"}</button>
                         {account.manualBaseline ? <button className="px-2 py-1.5 text-sm text-neutral-500 hover:text-neutral-200" disabled={savingAccountId === account.accountId} onClick={() => onSave(account.accountId, { ...draft, startDate: "", endDate: "" })}>Clear baseline</button> : null}
                       </div>
+                      {!account.manualBaseline && account.earliestTransactionDate && account.latestTransactionDate ? <p className="mt-2 text-xs text-neutral-500">Prefilled from detected transaction activity; click Save to confirm it as the initial baseline.</p> : null}
                     </div>
                   );
                 })}

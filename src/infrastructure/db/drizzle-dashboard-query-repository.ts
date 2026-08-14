@@ -234,7 +234,11 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         .orderBy(sources.name, accounts.name),
       this.db.select().from(accountCoveragePeriods).orderBy(accountCoveragePeriods.startDate, accountCoveragePeriods.endDate),
       this.db
-        .select({ accountId: transactions.accountId, latestTransactionDate: sql<string | null>`max(${transactions.transactionDate})` })
+        .select({
+          accountId: transactions.accountId,
+          earliestTransactionDate: sql<string | null>`min(${transactions.transactionDate})`,
+          latestTransactionDate: sql<string | null>`max(${transactions.transactionDate})`,
+        })
         .from(transactions)
         .groupBy(transactions.accountId),
       this.db
@@ -250,7 +254,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         .where(eq(accountCoveragePeriods.origin, "import"))
         .groupBy(accountCoveragePeriods.accountId),
     ]);
-    const activityByAccount = new Map(activityRows.map(row => [row.accountId, row.latestTransactionDate]));
+    const activityByAccount = new Map(activityRows.map(row => [row.accountId, row]));
     const lastImportByAccount = new Map<number, string | null>();
     for (const row of [...transactionImportRows, ...coverageImportRows]) {
       const current = lastImportByAccount.get(row.accountId);
@@ -267,7 +271,8 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       const manual = periods.find(period => period.origin === "manual") ?? null;
       return {
         ...account,
-        latestTransactionDate: activityByAccount.get(account.accountId) ?? null,
+        earliestTransactionDate: activityByAccount.get(account.accountId)?.earliestTransactionDate ?? null,
+        latestTransactionDate: activityByAccount.get(account.accountId)?.latestTransactionDate ?? null,
         lastImportAt: lastImportByAccount.get(account.accountId) ?? null,
         coverageIntervals: mergeCoverageIntervals(periods.map(period => ({ startDate: period.startDate, endDate: period.endDate }))),
         manualBaseline: manual ? { startDate: manual.startDate, endDate: manual.endDate } : null,

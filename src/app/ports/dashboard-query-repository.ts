@@ -78,6 +78,7 @@ export type DataCoverageAccount = {
   sourceId: number;
   sourceName: string;
   required: boolean;
+  earliestTransactionDate: string | null;
   latestTransactionDate: string | null;
   lastImportAt: string | null;
   coverageIntervals: CoverageInterval[];

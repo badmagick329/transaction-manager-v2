@@ -42,6 +42,7 @@ describe("verified data coverage", () => {
 
     const coverage = await queries.getDataCoverage();
     expect(coverage.accounts).toHaveLength(1);
+    expect(coverage.accounts[0].earliestTransactionDate).toBeNull();
     expect(coverage.accounts[0].latestTransactionDate).toBeNull();
     expect(coverage.accounts[0].coverageIntervals).toEqual([{ startDate: "2026-01-01", endDate: "2026-01-31" }]);
     expect(coverage.commonCoveredThrough).toBe("2026-01-31");
@@ -62,6 +63,7 @@ describe("verified data coverage", () => {
     const coverage = await queries.getDataCoverage();
     const firstCoverage = coverage.accounts.find(item => item.accountName === first.name)!;
     const secondCoverage = coverage.accounts.find(item => item.accountName === second.name)!;
+    expect(firstCoverage.earliestTransactionDate).toBe("2026-01-10");
     expect(firstCoverage.latestTransactionDate).toBe("2026-01-10");
     expect(firstCoverage.coverageIntervals).toEqual([{ startDate: "2026-01-01", endDate: "2026-03-31" }]);
     expect(secondCoverage.coverageIntervals).toEqual([{ startDate: "2026-01-01", endDate: "2026-01-31" }]);

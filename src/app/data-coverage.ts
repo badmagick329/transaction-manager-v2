@@ -43,6 +43,17 @@ export function intersectCoverageIntervals(intervalSets: CoverageInterval[][]): 
   return common;
 }
 
+export function intersectCoverageFromActivation(intervalSets: CoverageInterval[][]): CoverageInterval[] {
+  const mergedSets = intervalSets.map(mergeCoverageIntervals);
+  if (mergedSets.length === 0 || mergedSets.some(intervals => intervals.length === 0)) return [];
+  const earliestActivation = mergedSets
+    .map(intervals => intervals[0].startDate)
+    .sort()[0];
+  return intersectCoverageIntervals(mergedSets.map(intervals => intervals.map((interval, index) => (
+    index === 0 ? { ...interval, startDate: earliestActivation } : interval
+  ))));
+}
+
 export function coverageIntervalForStart(intervals: CoverageInterval[], startDate: string) {
   return intervals.find(interval => interval.startDate <= startDate && startDate <= interval.endDate) ?? null;
 }

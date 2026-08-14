@@ -81,11 +81,35 @@ describe("verified data coverage", () => {
 
     await queries.updateCoverageAccountSettings({ accountId: unknown.accountId, required: true, baselineStartDate: "2026-02-10", baselineEndDate: "2026-02-20" });
     coverage = await queries.getDataCoverage();
-    expect(coverage.commonIntervals).toEqual([{ startDate: "2026-02-10", endDate: "2026-02-20" }]);
+    expect(coverage.commonIntervals).toEqual([{ startDate: "2026-02-01", endDate: "2026-02-20" }]);
 
     await queries.updateCoverageAccountSettings({ accountId: unknown.accountId, required: false, baselineStartDate: null, baselineEndDate: null });
     coverage = await queries.getDataCoverage();
     expect(coverage.accounts.find(item => item.accountId === unknown.accountId)?.manualBaseline).toBeNull();
     expect(coverage.commonIntervals).toEqual(known.coverageIntervals);
+  });
+
+  test("treats PayPal currency balances as one provider-wide coverage feed", async () => {
+    const { imports, queries } = await context();
+    const eur = { externalId: null, name: "PayPal EUR balance", currencyCode: "EUR" };
+    const gbp = { externalId: null, name: "PayPal GBP balance", currencyCode: "GBP" };
+    const parsed = standardImportFileSchema.parse({
+      source: { slug: "paypal", name: "PayPal", kind: "paypal", fileName: "paypal.csv", account: null },
+      records: [
+        { account: eur, externalId: "eur-1", transactionDate: "2023-02-14", description: "EUR activity", amountMinor: 100, currencyCode: "EUR", rawPayload: {} },
+        { account: gbp, externalId: "gbp-1", transactionDate: "2026-06-08", description: "GBP activity", amountMinor: 100, currencyCode: "GBP", rawPayload: {} },
+      ],
+    });
+    await runImport(imports, parsed);
+    let coverage = await queries.getDataCoverage();
+    const eurAccount = coverage.accounts.find(item => item.accountName === eur.name)!;
+    const gbpAccount = coverage.accounts.find(item => item.accountName === gbp.name)!;
+    await queries.updateCoverageAccountSettings({ accountId: eurAccount.accountId, required: true, baselineStartDate: "2023-02-14", baselineEndDate: "2023-09-05" });
+    await queries.updateCoverageAccountSettings({ accountId: gbpAccount.accountId, required: true, baselineStartDate: "2023-01-18", baselineEndDate: "2026-06-08" });
+
+    coverage = await queries.getDataCoverage();
+    expect(coverage.commonCoveredThrough).toBe("2026-06-08");
+    expect(coverage.accounts.every(item => item.coverageIntervals.at(-1)?.endDate === "2026-06-08")).toBe(true);
+    expect(coverage.accounts.every(item => item.recommendedBaseline?.startDate === "2023-02-14" && item.recommendedBaseline.endDate === "2026-06-08")).toBe(true);
   });
 });

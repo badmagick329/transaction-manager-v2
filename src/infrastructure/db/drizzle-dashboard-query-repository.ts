@@ -13,7 +13,7 @@ import type {
   TransactionListOptions,
   TransactionSummary,
 } from "../../app/ports/dashboard-query-repository";
-import { intersectCoverageIntervals, mergeCoverageIntervals } from "../../app/data-coverage";
+import { intersectCoverageFromActivation, mergeCoverageIntervals } from "../../app/data-coverage";
 import { exclusiveEndDate } from "../../app/date-range";
 import type { AppDatabase } from "./client";
 import { accountCoveragePeriods, accounts, cashFlowExclusions, importBatches, rawRecords, sources, tagRules, tags, transactionLinks, transactionManualTags, transactionTagRuleMatches, transactions } from "./schema";
@@ -227,6 +227,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
           currencyCode: accounts.currencyCode,
           sourceId: sources.id,
           sourceName: sources.name,
+          sourceKind: sources.kind,
           required: accounts.coverageRequired,
         })
         .from(accounts)
@@ -266,7 +267,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       periods.push(period);
       periodsByAccount.set(period.accountId, periods);
     }
-    const coverageAccounts = accountRows.map(account => {
+    const rawCoverageAccounts = accountRows.map(account => {
       const periods = periodsByAccount.get(account.accountId) ?? [];
       const manual = periods.find(period => period.origin === "manual") ?? null;
       return {
@@ -278,10 +279,34 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         manualBaseline: manual ? { startDate: manual.startDate, endDate: manual.endDate } : null,
       };
     });
+    const recommendedBySource = new Map<number, { startDate: string; endDate: string }>();
+    for (const account of rawCoverageAccounts) {
+      if (!account.earliestTransactionDate || !account.latestTransactionDate) continue;
+      const startDate = account.earliestTransactionDate.slice(0, 10);
+      const endDate = account.latestTransactionDate.slice(0, 10);
+      const current = recommendedBySource.get(account.sourceId);
+      recommendedBySource.set(account.sourceId, {
+        startDate: !current || startDate < current.startDate ? startDate : current.startDate,
+        endDate: !current || endDate > current.endDate ? endDate : current.endDate,
+      });
+    }
+    const paypalCoverageBySource = new Map<number, Array<{ startDate: string; endDate: string }>>();
+    for (const account of rawCoverageAccounts.filter(account => account.sourceKind === "paypal")) {
+      const intervals = paypalCoverageBySource.get(account.sourceId) ?? [];
+      intervals.push(...account.coverageIntervals);
+      paypalCoverageBySource.set(account.sourceId, intervals);
+    }
+    const coverageAccounts = rawCoverageAccounts.map(({ sourceKind, ...account }) => ({
+      ...account,
+      coverageIntervals: sourceKind === "paypal"
+        ? mergeCoverageIntervals(paypalCoverageBySource.get(account.sourceId) ?? [])
+        : account.coverageIntervals,
+      recommendedBaseline: recommendedBySource.get(account.sourceId) ?? null,
+    }));
     const requiredAccounts = coverageAccounts.filter(account => account.required);
     const blockingAccountIds = requiredAccounts.filter(account => account.coverageIntervals.length === 0).map(account => account.accountId);
     const commonIntervals = blockingAccountIds.length === 0 && requiredAccounts.length > 0
-      ? intersectCoverageIntervals(requiredAccounts.map(account => account.coverageIntervals))
+      ? intersectCoverageFromActivation(requiredAccounts.map(account => account.coverageIntervals))
       : [];
     return {
       accounts: coverageAccounts,

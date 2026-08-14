@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { capEndDateToCoverage, coverageIntervalForStart, intersectCoverageIntervals, mergeCoverageIntervals } from "./data-coverage";
+import { capEndDateToCoverage, coverageIntervalForStart, intersectCoverageFromActivation, intersectCoverageIntervals, mergeCoverageIntervals } from "./data-coverage";
 import { standardImportFileSchema } from "./contracts/standard-import";
 
 describe("data coverage intervals", () => {
@@ -38,5 +38,12 @@ describe("data coverage intervals", () => {
     expect(capEndDateToCoverage("2026-04-30", common[1])).toBe("2026-03-31");
     expect(capEndDateToCoverage("2026-03-15", common[1])).toBe("2026-03-15");
     expect(capEndDateToCoverage("", common[1])).toBe("2026-03-31");
+  });
+
+  test("does not treat dates before a later account began as missing coverage", () => {
+    expect(intersectCoverageFromActivation([
+      [{ startDate: "2024-01-01", endDate: "2026-06-30" }],
+      [{ startDate: "2025-11-07", endDate: "2026-07-27" }],
+    ])).toEqual([{ startDate: "2024-01-01", endDate: "2026-06-30" }]);
   });
 });

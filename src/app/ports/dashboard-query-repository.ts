@@ -83,6 +83,7 @@ export type DataCoverageAccount = {
   lastImportAt: string | null;
   coverageIntervals: CoverageInterval[];
   manualBaseline: CoverageInterval | null;
+  recommendedBaseline: CoverageInterval | null;
 };
 
 export type DataCoverage = {

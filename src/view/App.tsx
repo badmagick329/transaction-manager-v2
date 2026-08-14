@@ -11,6 +11,7 @@ import { capEndDateToCoverage, coverageIntervalForStart } from "../app/data-cove
 import { DataCoverageCard } from "./DataCoverageCard";
 import { economicTypeOptions, economicTypeOptionsForDirection, formatCompactMoney, formatMoney, formatTransactionDate, matchModeOptions, titleCase } from "./formatters";
 import type { Account, CashFlowSummary, CashFlowTrend, ClassificationMatchMode, ClassificationReviewGroup, ClassificationRule, DataCoverage, EconomicDirection, EconomicType, LatestImport, PayPalPaymentLink, Tag, TagRule, TagRuleDraft, Transaction, TransactionFilters, TransactionSummary } from "./types";
+import { browserPreferenceStorage, emptyTransactionFilters, loadUiPreferences, presetDateRange, saveUiPreferences, type DashboardDatePreset, type TrendGranularity, type WorkspacePage } from "./ui-preferences";
 
 /*type LatestImport = {
   fileName: string;
@@ -165,35 +166,31 @@ function formatTransactionDate(transactionDate: string) {
   return transactionDate.slice(0, 10);
 }*/
 
-function toDateInput(date: Date) { return date.toISOString().slice(0, 10); }
 const transactionPageSize = 100;
 const classificationReviewPageSize = 25;
 function isAmountInput(value: string) { return value === "" || /^-?\d*(?:\.\d{0,2})?$/.test(value); }
 function isCompleteAmount(value: string) { return /^-?\d+(?:\.\d{1,2})?$/.test(value); }
-function currentMonthRange() { const now = new Date(); return { startDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))), endDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0))) }; }
-function since2024Range() { return { startDate: "2024-01-01", endDate: toDateInput(new Date()) }; }
-function presetDateRange(preset: "since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date") { if (preset === "since_2024") return since2024Range(); if (preset === "month") return currentMonthRange(); const end = new Date(); const start = new Date(end); if (preset === "year_to_date") start.setUTCMonth(0, 1); else start.setUTCDate(start.getUTCDate() - (preset === "last_30_days" ? 29 : 89)); return { startDate: toDateInput(start), endDate: toDateInput(end) }; }
 function coverageStartSuggestion(coverage: DataCoverage | null, selectedStart: string) { return coverage?.commonIntervals.find(interval => interval.startDate > selectedStart)?.startDate ?? coverage?.commonIntervals[0]?.startDate ?? null; }
 const emptyTagRuleDraft: TagRuleDraft = { tagId: "", sourceId: "", description: "", matchMode: "exact", direction: "outflow" };
-const emptyTransactionFilters: TransactionFilters = { sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "", hideTrading212InterestCashbackAndDividends: false, hideTransfers: false, tagIds: [], untagged: false };
 
 export function App() {
+  const [initialPreferences] = useState(() => loadUiPreferences(browserPreferenceStorage()));
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [transactionSummary, setTransactionSummary] = useState<TransactionSummary[]>([]);
   const [cashFlowExclusionCount, setCashFlowExclusionCount] = useState(0);
-  const [showingCashFlowExclusions, setShowingCashFlowExclusions] = useState(false);
+  const [showingCashFlowExclusions, setShowingCashFlowExclusions] = useState(initialPreferences.transactions.showingCashFlowExclusions);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [dataCoverage, setDataCoverage] = useState<DataCoverage | null>(null);
-  const [dashboardCompleteDataOnly, setDashboardCompleteDataOnly] = useState(false);
-  const [transactionCompleteDataOnly, setTransactionCompleteDataOnly] = useState(false);
+  const [dashboardCompleteDataOnly, setDashboardCompleteDataOnly] = useState(initialPreferences.dashboard.completeDataOnly);
+  const [transactionCompleteDataOnly, setTransactionCompleteDataOnly] = useState(initialPreferences.transactions.completeDataOnly);
   const [savingCoverageAccountId, setSavingCoverageAccountId] = useState<number | null>(null);
-  const [page, setPage] = useState<"dashboard" | "classification" | "reconciliation" | "tags" | "transactions">("dashboard");
-  const [dateRange, setDateRange] = useState(since2024Range);
-  const [datePreset, setDatePreset] = useState<"since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date" | "custom">("since_2024");
+  const [page, setPage] = useState<WorkspacePage>(initialPreferences.page);
+  const [dateRange, setDateRange] = useState(initialPreferences.dashboard.dateRange);
+  const [datePreset, setDatePreset] = useState<DashboardDatePreset>(initialPreferences.dashboard.datePreset);
   const [cashFlowSummary, setCashFlowSummary] = useState<CashFlowSummary[] | null>(null);
   const [cashFlowTrend, setCashFlowTrend] = useState<CashFlowTrend[] | null>(null);
-  const [trendGranularity, setTrendGranularity] = useState<"month" | "year">("month");
+  const [trendGranularity, setTrendGranularity] = useState<TrendGranularity>(initialPreferences.dashboard.trendGranularity);
   const [reviewGroups, setReviewGroups] = useState<ClassificationReviewGroup[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
   const [payPalLinks, setPayPalLinks] = useState<PayPalPaymentLink[]>([]);
@@ -206,8 +203,8 @@ export function App() {
   const [ruleDrafts, setRuleDrafts] = useState<Record<string, { description: string; matchMode: ClassificationMatchMode }>>({});
   const [hasMoreTransactions, setHasMoreTransactions] = useState(false);
   const [loadingTransactions, setLoadingTransactions] = useState(false);
-  const [transactionFilter, setTransactionFilter] = useState<"all" | EconomicType>("all");
-  const [transactionFilters, setTransactionFilters] = useState<TransactionFilters>(emptyTransactionFilters);
+  const [transactionFilter, setTransactionFilter] = useState<"all" | EconomicType>(initialPreferences.transactions.economicType);
+  const [transactionFilters, setTransactionFilters] = useState<TransactionFilters>(initialPreferences.transactions.filters);
   const [visibleReviewGroupCount, setVisibleReviewGroupCount] = useState(classificationReviewPageSize);
   const remainingClassificationCount = reviewGroups.reduce((total, group) => total + group.transactionCount, 0);
   const sources = [...new Map(accounts.filter(account => account.sourceId !== null).map(account => [account.sourceId!, account.sourceName ?? "Unknown source"])).entries()];
@@ -341,6 +338,40 @@ export function App() {
 
     void load();
   }, []);
+
+  useEffect(() => {
+    saveUiPreferences(browserPreferenceStorage(), {
+      page,
+      dashboard: {
+        datePreset,
+        dateRange,
+        completeDataOnly: dashboardCompleteDataOnly,
+        trendGranularity,
+      },
+      transactions: {
+        economicType: transactionFilter,
+        filters: transactionFilters,
+        completeDataOnly: transactionCompleteDataOnly,
+        showingCashFlowExclusions,
+      },
+    });
+  }, [page, datePreset, dateRange, dashboardCompleteDataOnly, trendGranularity, transactionFilter, transactionFilters, transactionCompleteDataOnly, showingCashFlowExclusions]);
+
+  useEffect(() => {
+    if (loading) return;
+    setTransactionFilters(current => {
+      const validSourceIds = new Set(accounts.flatMap(account => account.sourceId === null ? [] : [String(account.sourceId)]));
+      const sourceId = !current.sourceId || validSourceIds.has(current.sourceId) ? current.sourceId : "";
+      const selectedAccount = accounts.find(account => String(account.id) === current.accountId);
+      const accountId = selectedAccount && (!sourceId || String(selectedAccount.sourceId) === sourceId) ? current.accountId : "";
+      const validCurrencies = new Set(accounts.map(account => account.currencyCode));
+      const currencyCode = !current.currencyCode || validCurrencies.has(current.currencyCode) ? current.currencyCode : "";
+      const validTagIds = new Set(tags.map(tag => String(tag.id)));
+      const tagIds = current.tagIds.filter(tagId => validTagIds.has(tagId));
+      if (sourceId === current.sourceId && accountId === current.accountId && currencyCode === current.currencyCode && tagIds.length === current.tagIds.length) return current;
+      return { ...current, sourceId, accountId, currencyCode, tagIds };
+    });
+  }, [loading, accounts, tags]);
 
   useEffect(() => {
     void loadCashFlowSummary(dashboardQueryRange).catch(summaryError => {

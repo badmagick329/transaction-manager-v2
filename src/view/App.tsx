@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "../index.css";
 import { ClassificationPage } from "./ClassificationPage";
@@ -7,8 +7,10 @@ import { TagsPage } from "./TagsPage";
 import { TagPicker } from "./TagPicker";
 import { DatePicker } from "../components/ui/date-picker";
 import { Checkbox } from "../components/ui/checkbox";
+import { capEndDateToCoverage, coverageIntervalForStart } from "../app/data-coverage";
+import { DataCoverageCard } from "./DataCoverageCard";
 import { economicTypeOptions, economicTypeOptionsForDirection, formatCompactMoney, formatMoney, formatTransactionDate, matchModeOptions, titleCase } from "./formatters";
-import type { Account, CashFlowSummary, CashFlowTrend, ClassificationMatchMode, ClassificationReviewGroup, ClassificationRule, EconomicDirection, EconomicType, LatestImport, PayPalPaymentLink, Tag, TagRule, TagRuleDraft, Transaction, TransactionFilters, TransactionSummary } from "./types";
+import type { Account, CashFlowSummary, CashFlowTrend, ClassificationMatchMode, ClassificationReviewGroup, ClassificationRule, DataCoverage, EconomicDirection, EconomicType, LatestImport, PayPalPaymentLink, Tag, TagRule, TagRuleDraft, Transaction, TransactionFilters, TransactionSummary } from "./types";
 
 /*type LatestImport = {
   fileName: string;
@@ -171,6 +173,7 @@ function isCompleteAmount(value: string) { return /^-?\d+(?:\.\d{1,2})?$/.test(v
 function currentMonthRange() { const now = new Date(); return { startDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))), endDate: toDateInput(new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 0))) }; }
 function since2024Range() { return { startDate: "2024-01-01", endDate: toDateInput(new Date()) }; }
 function presetDateRange(preset: "since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date") { if (preset === "since_2024") return since2024Range(); if (preset === "month") return currentMonthRange(); const end = new Date(); const start = new Date(end); if (preset === "year_to_date") start.setUTCMonth(0, 1); else start.setUTCDate(start.getUTCDate() - (preset === "last_30_days" ? 29 : 89)); return { startDate: toDateInput(start), endDate: toDateInput(end) }; }
+function coverageStartSuggestion(coverage: DataCoverage | null, selectedStart: string) { return coverage?.commonIntervals.find(interval => interval.startDate > selectedStart)?.startDate ?? coverage?.commonIntervals[0]?.startDate ?? null; }
 const emptyTagRuleDraft: TagRuleDraft = { tagId: "", sourceId: "", description: "", matchMode: "exact", direction: "outflow" };
 const emptyTransactionFilters: TransactionFilters = { sourceId: "", accountId: "", currencyCode: "", transactionType: "", description: "", minAmount: "", maxAmount: "", startDate: "", endDate: "", hideTrading212InterestCashbackAndDividends: false, hideTransfers: false, tagIds: [], untagged: false };
 
@@ -181,6 +184,10 @@ export function App() {
   const [cashFlowExclusionCount, setCashFlowExclusionCount] = useState(0);
   const [showingCashFlowExclusions, setShowingCashFlowExclusions] = useState(false);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  const [dataCoverage, setDataCoverage] = useState<DataCoverage | null>(null);
+  const [dashboardCompleteDataOnly, setDashboardCompleteDataOnly] = useState(false);
+  const [transactionCompleteDataOnly, setTransactionCompleteDataOnly] = useState(false);
+  const [savingCoverageAccountId, setSavingCoverageAccountId] = useState<number | null>(null);
   const [page, setPage] = useState<"dashboard" | "classification" | "reconciliation" | "tags" | "transactions">("dashboard");
   const [dateRange, setDateRange] = useState(since2024Range);
   const [datePreset, setDatePreset] = useState<"since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date" | "custom">("since_2024");
@@ -205,6 +212,15 @@ export function App() {
   const remainingClassificationCount = reviewGroups.reduce((total, group) => total + group.transactionCount, 0);
   const sources = [...new Map(accounts.filter(account => account.sourceId !== null).map(account => [account.sourceId!, account.sourceName ?? "Unknown source"])).entries()];
   const currencies = [...new Set(accounts.map(account => account.currencyCode))].sort();
+  const dashboardCoverageInterval = dataCoverage ? coverageIntervalForStart(dataCoverage.commonIntervals, dateRange.startDate) : null;
+  const transactionCoverageInterval = dataCoverage && transactionFilters.startDate ? coverageIntervalForStart(dataCoverage.commonIntervals, transactionFilters.startDate) : null;
+  const dashboardQueryRange = useMemo(() => ({
+    ...dateRange,
+    endDate: dashboardCompleteDataOnly && dashboardCoverageInterval ? capEndDateToCoverage(dateRange.endDate, dashboardCoverageInterval) : dateRange.endDate,
+  }), [dateRange, dashboardCompleteDataOnly, dashboardCoverageInterval?.endDate]);
+  const transactionEffectiveEndDate = transactionCompleteDataOnly && transactionCoverageInterval
+    ? capEndDateToCoverage(transactionFilters.endDate, transactionCoverageInterval)
+    : transactionFilters.endDate;
 
   const loadClassifications = async () => {
     const [reviewResponse, rulesResponse] = await Promise.all([
@@ -250,6 +266,12 @@ export function App() {
     setAccounts(await response.json());
   };
 
+  const loadDataCoverage = async () => {
+    const response = await fetch("/api/data-coverage");
+    if (!response.ok) throw new Error("Unable to load data coverage.");
+    setDataCoverage(await response.json());
+  };
+
   const loadCashFlowExclusionCount = async () => {
     const response = await fetch("/api/transactions/cash-flow-exclusions/count");
     if (!response.ok) throw new Error("Unable to load cash-flow exclusions.");
@@ -270,7 +292,8 @@ export function App() {
       if (isCompleteAmount(filters.minAmount)) query.set("minAmount", filters.minAmount);
       if (isCompleteAmount(filters.maxAmount)) query.set("maxAmount", filters.maxAmount);
       if (filters.startDate) query.set("startDate", filters.startDate);
-      if (filters.endDate) query.set("endDate", filters.endDate);
+      const effectiveEndDate = filters === transactionFilters ? transactionEffectiveEndDate : filters.endDate;
+      if (effectiveEndDate) query.set("endDate", effectiveEndDate);
       if (filters.hideTrading212InterestCashbackAndDividends) query.set("hideTrading212InterestCashbackAndDividends", "true");
       if (filters.hideTransfers) query.set("hideTransfers", "true");
       filters.tagIds.forEach(tagId => query.append("tagId", tagId));
@@ -301,6 +324,7 @@ export function App() {
           fetch("/api/imports/latest"),
           loadTransactions(),
           loadAccounts(),
+          loadDataCoverage(),
           loadClassifications(),
           loadPayPalLinks(),
           loadCashFlowExclusionCount(),
@@ -319,23 +343,23 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    void loadCashFlowSummary(dateRange).catch(summaryError => {
+    void loadCashFlowSummary(dashboardQueryRange).catch(summaryError => {
       setError(summaryError instanceof Error ? summaryError.message : "Unable to load cash flow.");
     });
-  }, [dateRange]);
+  }, [dashboardQueryRange]);
 
   useEffect(() => {
-    void loadCashFlowTrend(dateRange).catch(trendError => {
+    void loadCashFlowTrend(dashboardQueryRange).catch(trendError => {
       setError(trendError instanceof Error ? trendError.message : "Unable to load cash-flow trend.");
     });
-  }, [dateRange, trendGranularity]);
+  }, [dashboardQueryRange, trendGranularity]);
 
   useEffect(() => {
     if (page !== "transactions") return;
     void loadTransactions().catch(transactionError => {
       setError(transactionError instanceof Error ? transactionError.message : "Unable to load transactions.");
     });
-  }, [page, transactionFilter, transactionFilters, showingCashFlowExclusions]);
+  }, [page, transactionFilter, transactionFilters, showingCashFlowExclusions, transactionCompleteDataOnly, transactionEffectiveEndDate]);
 
   const setCashFlowExcluded = async (transaction: Transaction, excluded: boolean) => {
     setSavingKey(`cash-flow-${transaction.id}`);
@@ -349,8 +373,8 @@ export function App() {
       if (!response.ok) throw new Error("Unable to update cash-flow exclusion.");
       await Promise.all([
         loadTransactions(),
-        loadCashFlowSummary(dateRange),
-        loadCashFlowTrend(dateRange),
+        loadCashFlowSummary(dashboardQueryRange),
+        loadCashFlowTrend(dashboardQueryRange),
         loadCashFlowExclusionCount(),
       ]);
     } catch (updateError) {
@@ -451,12 +475,61 @@ export function App() {
       });
       const responseBody = await response.json();
       if (!response.ok) throw new Error(responseBody.error ?? "Unable to update PayPal match.");
-      await Promise.all([loadPayPalLinks(), loadTransactions(), loadCashFlowSummary(dateRange), loadCashFlowTrend(dateRange)]);
+      await Promise.all([loadPayPalLinks(), loadTransactions(), loadCashFlowSummary(dashboardQueryRange), loadCashFlowTrend(dashboardQueryRange)]);
     } catch (updateError) {
       setError(updateError instanceof Error ? updateError.message : "Unable to update PayPal match.");
     } finally {
       setSavingKey(null);
     }
+  };
+
+  const saveCoverageSettings = async (accountId: number, draft: { required: boolean; startDate: string; endDate: string }) => {
+    setSavingCoverageAccountId(accountId);
+    setError(null);
+    try {
+      const response = await fetch("/api/data-coverage/account-settings", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          accountId,
+          required: draft.required,
+          baselineStartDate: draft.startDate || null,
+          baselineEndDate: draft.endDate || null,
+        }),
+      });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error ?? "Unable to update data coverage.");
+      setDataCoverage(body);
+      await loadAccounts();
+    } catch (coverageError) {
+      setError(coverageError instanceof Error ? coverageError.message : "Unable to update data coverage.");
+    } finally {
+      setSavingCoverageAccountId(null);
+    }
+  };
+
+  const setDashboardCoverageCap = (enabled: boolean) => {
+    if (enabled && !dashboardCoverageInterval) {
+      const suggestion = coverageStartSuggestion(dataCoverage, dateRange.startDate);
+      setError(suggestion ? `Complete coverage does not include ${dateRange.startDate}. Choose ${suggestion} or a later covered start date.` : "Complete coverage is not established for all required accounts yet.");
+      return;
+    }
+    setDashboardCompleteDataOnly(enabled);
+    setError(null);
+  };
+
+  const setTransactionCoverageCap = (enabled: boolean) => {
+    if (enabled && !transactionFilters.startDate) {
+      setError("Choose a transaction start date before enabling Complete data only.");
+      return;
+    }
+    if (enabled && !transactionCoverageInterval) {
+      const suggestion = coverageStartSuggestion(dataCoverage, transactionFilters.startDate);
+      setError(suggestion ? `Complete coverage does not include ${transactionFilters.startDate}. Choose ${suggestion} or a later covered start date.` : "Complete coverage is not established for all required accounts yet.");
+      return;
+    }
+    setTransactionCompleteDataOnly(enabled);
+    setError(null);
   };
 
   return (
@@ -503,6 +576,8 @@ export function App() {
         </section>
 
         {page === "dashboard" ? (
+          <>
+          <DataCoverageCard coverage={dataCoverage} savingAccountId={savingCoverageAccountId} onSave={(accountId, draft) => void saveCoverageSettings(accountId, draft)} />
           <section className="mt-8">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div>
@@ -516,6 +591,7 @@ export function App() {
                   value={datePreset}
                   onChange={event => {
                     const preset = event.target.value as typeof datePreset;
+                    setDashboardCompleteDataOnly(false);
                     setDatePreset(preset);
                     if (preset !== "custom") setDateRange(presetDateRange(preset));
                   }}
@@ -530,9 +606,11 @@ export function App() {
               </label>
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-neutral-400">
-              <label>From <input className="ml-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100" type="date" value={dateRange.startDate} onChange={event => { setDatePreset("custom"); setDateRange(current => ({ ...current, startDate: event.target.value })); }} /></label>
+              <label>From <input className="ml-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100" type="date" value={dateRange.startDate} onChange={event => { setDashboardCompleteDataOnly(false); setDatePreset("custom"); setDateRange(current => ({ ...current, startDate: event.target.value })); }} /></label>
               <label>To <input className="ml-2 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100" type="date" value={dateRange.endDate} onChange={event => { setDatePreset("custom"); setDateRange(current => ({ ...current, endDate: event.target.value })); }} /></label>
+              <label className="flex items-center gap-2 text-neutral-300"><Checkbox checked={dashboardCompleteDataOnly} onCheckedChange={checked => setDashboardCoverageCap(checked === true)} />Complete data only</label>
             </div>
+            {dashboardCompleteDataOnly && dashboardCoverageInterval ? <p className="mt-2 text-xs text-emerald-300">Using verified data through {dashboardQueryRange.endDate}.</p> : null}
             {cashFlowSummary === null ? <p className="mt-5 text-sm text-neutral-400">Loading cash flow…</p> : null}
             {cashFlowSummary?.length === 0 ? <p className="mt-5 text-sm text-neutral-400">No transactions for this range.</p> : null}
             {cashFlowSummary?.map(summary => (
@@ -613,6 +691,7 @@ export function App() {
               })}
             </div>
           </section>
+          </>
         ) : null}
 
         {page === "classification" ? <ClassificationPage loading={loading} reviewGroups={reviewGroups} rules={rules} savingKey={savingKey} ruleDrafts={ruleDrafts} visibleCount={visibleReviewGroupCount} setRuleDrafts={setRuleDrafts} loadMore={() => setVisibleReviewGroupCount(current => current + classificationReviewPageSize)} saveRule={(input, key) => void saveRule(input, key)} deleteRule={rule => void deleteRule(rule)} /> : null}
@@ -782,7 +861,7 @@ export function App() {
             <label className="text-xs text-neutral-400">Description contains<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.description} onChange={event => setTransactionFilters(current => ({ ...current, description: event.target.value }))} placeholder="e.g. Spotify" /></label>
             <label className="text-xs text-neutral-400">Amount from<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="text" inputMode="decimal" value={transactionFilters.minAmount} onChange={event => { if (isAmountInput(event.target.value)) setTransactionFilters(current => ({ ...current, minAmount: event.target.value })); }} placeholder="e.g. -200.00" /></label>
             <label className="text-xs text-neutral-400">Amount to<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="text" inputMode="decimal" value={transactionFilters.maxAmount} onChange={event => { if (isAmountInput(event.target.value)) setTransactionFilters(current => ({ ...current, maxAmount: event.target.value })); }} placeholder="e.g. 200.00" /></label>
-            <label className="text-xs text-neutral-400">From<DatePicker value={transactionFilters.startDate} onChange={value => setTransactionFilters(current => ({ ...current, startDate: value }))} placeholder="Select start date" /></label>
+            <label className="text-xs text-neutral-400">From<DatePicker value={transactionFilters.startDate} onChange={value => { setTransactionCompleteDataOnly(false); setTransactionFilters(current => ({ ...current, startDate: value })); }} placeholder="Select start date" /></label>
             <label className="text-xs text-neutral-400">To<DatePicker value={transactionFilters.endDate} onChange={value => setTransactionFilters(current => ({ ...current, endDate: value }))} placeholder="Select end date" /></label>
             <fieldset className="text-xs text-neutral-400 sm:col-span-2"><legend>Tags · match any</legend><div className="mt-1 flex min-h-9 max-h-28 flex-wrap items-center gap-2 overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5">{tags.map(tag => <label key={tag.id} className="flex items-center gap-1.5 text-sm text-neutral-300"><Checkbox checked={transactionFilters.tagIds.includes(String(tag.id))} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, tagIds: checked === true ? [...current.tagIds, String(tag.id)] : current.tagIds.filter(tagId => tagId !== String(tag.id)) }))} />{tag.name}</label>)}<label className="flex items-center gap-1.5 text-sm text-neutral-300"><Checkbox checked={transactionFilters.untagged} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, untagged: checked === true }))} />Untagged</label>{tags.length === 0 ? <span className="text-sm text-neutral-500">No tags created</span> : null}</div></fieldset>
             </div>
@@ -790,10 +869,12 @@ export function App() {
               <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-6">
                 <label className="flex items-center gap-2 text-sm text-neutral-300"><Checkbox checked={transactionFilters.hideTrading212InterestCashbackAndDividends} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, hideTrading212InterestCashbackAndDividends: checked === true }))} />Hide Trading 212 interest, cashback, and dividends</label>
                 <label className="flex items-center gap-2 text-sm text-neutral-300"><Checkbox checked={transactionFilters.hideTransfers} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, hideTransfers: checked === true }))} />Hide transfers</label>
+                <label className="flex items-center gap-2 text-sm text-neutral-300"><Checkbox checked={transactionCompleteDataOnly} onCheckedChange={checked => setTransactionCoverageCap(checked === true)} />Complete data only</label>
               </div>
-              <button className="w-fit rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800" onClick={() => { setTransactionFilter("all"); setTransactionFilters(emptyTransactionFilters); }}>Clear filters</button>
+              <button className="w-fit rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800" onClick={() => { setTransactionCompleteDataOnly(false); setTransactionFilter("all"); setTransactionFilters(emptyTransactionFilters); }}>Clear filters</button>
             </div>
           </div>
+          {transactionCompleteDataOnly && transactionCoverageInterval ? <p className="mt-2 text-xs text-emerald-300">Using verified data through {transactionEffectiveEndDate}.</p> : null}
           <p className="mt-2 text-xs text-neutral-500">Amount filters use signed values: negative for money out and positive for money in.</p>
 
           {transactionSummary.length > 0 ? <div className="mt-4 flex flex-wrap gap-3">{transactionSummary.map(summary => <div key={summary.currencyCode} className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 text-sm"><p className="text-xs uppercase tracking-wide text-neutral-500">{showingCashFlowExclusions ? "Excluded total" : "Filtered total"} · {summary.transactionCount} transactions · {summary.currencyCode}</p><p className="mt-1 text-neutral-200">Income <span className="font-medium text-emerald-300">{formatMoney(summary.incomeMinor, summary.currencyCode)}</span> · Expenses <span className="font-medium text-red-300">{formatMoney(Math.abs(summary.expenseMinor), summary.currencyCode)}</span> · Net cash flow <span className={summary.netCashFlowMinor < 0 ? "font-medium text-red-300" : "font-medium text-emerald-300"}>{formatMoney(summary.netCashFlowMinor, summary.currencyCode)}</span></p><p className="mt-1 text-xs text-neutral-500">Transfers: {formatMoney(summary.transferInflowMinor, summary.currencyCode)} in · {formatMoney(Math.abs(summary.transferOutflowMinor), summary.currencyCode)} out</p>{showingCashFlowExclusions ? <p className="mt-1 text-xs text-neutral-500">Not included in dashboard cash flow.</p> : null}</div>)}</div> : null}

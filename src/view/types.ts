@@ -18,3 +18,6 @@ export type CashFlowSummary = { currencyCode: string; incomeMinor: number; expen
 export type CashFlowPeriod = { period: string; label: string; incomeMinor: number; expenseMinor: number; netCashFlowMinor: number; transferInflowMinor: number; transferOutflowMinor: number; unclassifiedTransactionCount: number };
 export type CashFlowTrend = { currencyCode: string; periods: CashFlowPeriod[] };
 export type DateRange = { startDate: string; endDate: string };
+export type CoverageInterval = DateRange;
+export type DataCoverageAccount = { accountId: number; accountName: string; currencyCode: string; sourceId: number; sourceName: string; required: boolean; latestTransactionDate: string | null; lastImportAt: string | null; coverageIntervals: CoverageInterval[]; manualBaseline: CoverageInterval | null };
+export type DataCoverage = { accounts: DataCoverageAccount[]; commonIntervals: CoverageInterval[]; commonCoveredThrough: string | null; blockingAccountIds: number[] };

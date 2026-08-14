@@ -1,4 +1,4 @@
-import type { DashboardQueryRepository, TransactionFilters, TransactionListOptions } from "../ports/dashboard-query-repository";
+import type { CoverageAccountSettings, DashboardQueryRepository, TransactionFilters, TransactionListOptions } from "../ports/dashboard-query-repository";
 
 export function createDashboardQueries(repository: DashboardQueryRepository) {
   return {
@@ -8,6 +8,8 @@ export function createDashboardQueries(repository: DashboardQueryRepository) {
     setCashFlowExcluded: (transactionId: number, excluded: boolean) => repository.setCashFlowExcluded(transactionId, excluded),
     getCashFlowExclusionCount: () => repository.getCashFlowExclusionCount(),
     getLatestImport: () => repository.getLatestImport(),
+    getDataCoverage: () => repository.getDataCoverage(),
+    updateCoverageAccountSettings: (settings: CoverageAccountSettings) => repository.updateCoverageAccountSettings(settings),
     getCashFlowSummary: (range: { startDate: string; endDate: string }) => repository.getCashFlowSummary(range),
     getCashFlowTrend: (range: { startDate: string; endDate: string; granularity: "month" | "year" }) => repository.getCashFlowTrend(range),
   };

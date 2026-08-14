@@ -71,6 +71,13 @@
       "when": 1786532807567,
       "tag": "0009_rich_lightspeed",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1786710000000,
+      "tag": "0010_verified_coverage",
+      "breakpoints": true
     }
   ]
 }

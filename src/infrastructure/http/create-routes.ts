@@ -3,7 +3,7 @@ import type { createClassificationActions } from "../../app/use-cases/classify-t
 import type { createPayPalPaymentReconciliation } from "../../app/use-cases/reconcile-paypal-payments";
 import type { createTaggingActions } from "../../app/use-cases/manage-tags";
 import { classificationMatchModes, economicDirections, economicTypes, linkStatuses, transactionTypes } from "../../core/finance/constants";
-import type { TransactionFilters } from "../../app/ports/dashboard-query-repository";
+import type { CoverageAccountSettings, TransactionFilters } from "../../app/ports/dashboard-query-repository";
 import { z } from "zod";
 
 type CreateHttpRoutesOptions = {
@@ -41,6 +41,23 @@ const saveTagRuleSchema = z.object({
   direction: z.enum(economicDirections),
 });
 const deleteTagRuleSchema = z.object({ ruleId: z.number().int().positive() });
+const coverageDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+});
+const updateCoverageAccountSchema = z.object({
+  accountId: z.number().int().positive(),
+  required: z.boolean(),
+  baselineStartDate: coverageDateSchema.nullable(),
+  baselineEndDate: coverageDateSchema.nullable(),
+}).superRefine((value, context) => {
+  if ((value.baselineStartDate === null) !== (value.baselineEndDate === null)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Provide both baseline dates or neither." });
+  }
+  if (value.baselineStartDate && value.baselineEndDate && value.baselineStartDate > value.baselineEndDate) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["baselineEndDate"], message: "Baseline start must be on or before its end." });
+  }
+});
 
 async function parseBody<T extends z.ZodType>(request: Request, schema: T): Promise<z.output<T>> {
   return schema.parse(await request.json());
@@ -250,6 +267,24 @@ export function createHttpRoutes({ queries, classifications, reconciliation, tag
     "/api/imports/latest": {
       async GET() {
         return Response.json(await queries.getLatestImport());
+      },
+    },
+
+    "/api/data-coverage": {
+      async GET() {
+        return Response.json(await queries.getDataCoverage());
+      },
+    },
+
+    "/api/data-coverage/account-settings": {
+      async POST(request: Request) {
+        try {
+          const settings = await parseBody(request, updateCoverageAccountSchema);
+          await queries.updateCoverageAccountSettings(settings as CoverageAccountSettings);
+          return Response.json(await queries.getDataCoverage());
+        } catch (error) {
+          return Response.json({ error: error instanceof Error ? error.message : "Unable to update data coverage." }, { status: 400 });
+        }
       },
     },
 

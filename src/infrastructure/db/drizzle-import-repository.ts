@@ -5,7 +5,7 @@ import { createSourceRecordHash, resolveImportRecordAccounts } from "../../app/u
 import type { AppDatabase } from "./client";
 import { ensureTrading212DefaultRules } from "./ensure-trading212-default-rules";
 import { applyTagRulesForTransactions } from "./drizzle-tagging-repository";
-import { accounts, classificationRules, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactions } from "./schema";
+import { accountCoveragePeriods, accounts, classificationRules, economicClassificationAudits, importAttempts, importBatches, rawRecords, sources, transactions } from "./schema";
 
 const now = () => new Date().toISOString();
 const insertBatchSize = 100;
@@ -75,6 +75,7 @@ export class DrizzleImportRepository implements ImportRepository {
             duplicateRecordCount: 0,
             errorMessage: null,
             importedAt: null,
+            sourceId: null,
             updatedAt: timestamp,
           })
           .where(eq(importBatches.id, existingBatch.id))
@@ -106,6 +107,7 @@ export class DrizzleImportRepository implements ImportRepository {
         .returning();
 
       const { source, isNew: isNewSource } = await this.findOrCreateSource(tx, input.importFile.source);
+      await tx.update(importBatches).set({ sourceId: source.id }).where(eq(importBatches.id, batch.id));
       if (isNewSource && input.importFile.source.kind === "trading212") {
         await ensureTrading212DefaultRules(tx, source.id);
       }
@@ -114,12 +116,17 @@ export class DrizzleImportRepository implements ImportRepository {
       const existingAccounts = await tx.select().from(accounts).where(eq(accounts.sourceId, source.id));
       const accountsByKey = new Map(existingAccounts.map(account => [account.externalId ? `external:${account.externalId}` : `name:${account.name}\u0000${account.currencyCode}`, account]));
       const missingAccountInputs = new Map<string, ResolvedImportRecord["account"]>();
-      for (const record of records) {
-        const key = accountKey(record.account);
-        if (!accountsByKey.has(key)) missingAccountInputs.set(key, record.account);
+      const declaredAccounts: Array<ResolvedImportRecord["account"]> = [
+        ...records.map(record => record.account),
+        ...(input.importFile.source.account ? [input.importFile.source.account as ResolvedImportRecord["account"]] : []),
+        ...(input.importFile.source.coveragePeriods ?? []).flatMap(period => period.account ? [period.account as ResolvedImportRecord["account"]] : []),
+      ];
+      for (const accountInput of declaredAccounts) {
+        const key = accountKey(accountInput);
+        if (!accountsByKey.has(key)) missingAccountInputs.set(key, accountInput);
       }
       if (missingAccountInputs.size > 0) {
-        const createdAccounts = await tx
+        const createdAccounts = (await tx
           .insert(accounts)
           .values([...missingAccountInputs.values()].map(account => ({
             sourceId: source.id,
@@ -130,10 +137,28 @@ export class DrizzleImportRepository implements ImportRepository {
             createdAt: timestamp,
             updatedAt: timestamp,
           })))
-          .returning();
+          .returning()) as typeof existingAccounts;
         for (const account of createdAccounts) {
           accountsByKey.set(account.externalId ? `external:${account.externalId}` : `name:${account.name}\u0000${account.currencyCode}`, account);
         }
+      }
+
+      const importedCoverage = (input.importFile.source.coveragePeriods ?? []).flatMap(period => {
+        const coveredAccounts = period.account
+          ? [accountsByKey.get(accountKey(period.account as ResolvedImportRecord["account"]))]
+          : [...accountsByKey.values()];
+        return coveredAccounts.flatMap(account => account ? [{
+          accountId: account.id,
+          importBatchId: batch.id,
+          origin: "import" as const,
+          startDate: period.startDate,
+          endDate: period.endDate,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        }] : []);
+      });
+      if (importedCoverage.length > 0) {
+        await tx.insert(accountCoveragePeriods).values(importedCoverage).onConflictDoNothing();
       }
 
       const recordsWithHashes = records.map(record => ({ record, sourceRecordHash: createSourceRecordHash(record) }));

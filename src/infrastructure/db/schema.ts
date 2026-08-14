@@ -41,6 +41,7 @@ export const accounts = sqliteTable(
     name: text("name").notNull(),
     kind: text("kind", { enum: accountKinds }).notNull(),
     currencyCode: text("currency_code").notNull(),
+    coverageRequired: integer("coverage_required", { mode: "boolean" }).notNull().default(true),
     createdAt: text("created_at").notNull().$defaultFn(isoNow),
     updatedAt: text("updated_at").notNull().$defaultFn(isoNow),
   },
@@ -58,6 +59,7 @@ export const importBatches = sqliteTable(
     id: integer("id").primaryKey({ autoIncrement: true }),
     fileName: text("file_name").notNull(),
     fileHash: text("file_hash").notNull(),
+    sourceId: integer("source_id").references(() => sources.id),
     status: text("status", { enum: importBatchStatuses }).notNull().default("pending"),
     attemptCount: integer("attempt_count").notNull().default(1),
     recordCount: integer("record_count").notNull().default(0),
@@ -69,6 +71,7 @@ export const importBatches = sqliteTable(
   },
   table => ({
     fileHashUnique: uniqueIndex("import_batches_file_hash_unique").on(table.fileHash),
+    sourceIdx: index("import_batches_source_idx").on(table.sourceId),
   }),
 );
 
@@ -182,6 +185,32 @@ export const classificationRules = sqliteTable(
       table.direction,
       table.matchMode,
       table.normalizedDescription,
+    ),
+  }),
+);
+
+export const accountCoveragePeriods = sqliteTable(
+  "account_coverage_periods",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    accountId: integer("account_id")
+      .notNull()
+      .references(() => accounts.id),
+    importBatchId: integer("import_batch_id").references(() => importBatches.id),
+    origin: text("origin", { enum: ["import", "manual"] }).notNull(),
+    startDate: text("start_date").notNull(),
+    endDate: text("end_date").notNull(),
+    createdAt: text("created_at").notNull().$defaultFn(isoNow),
+    updatedAt: text("updated_at").notNull().$defaultFn(isoNow),
+  },
+  table => ({
+    accountIdx: index("account_coverage_periods_account_idx").on(table.accountId),
+    importBatchIdx: index("account_coverage_periods_import_batch_idx").on(table.importBatchId),
+    importedPeriodUnique: uniqueIndex("account_coverage_periods_import_unique").on(
+      table.importBatchId,
+      table.accountId,
+      table.startDate,
+      table.endDate,
     ),
   }),
 );
@@ -330,6 +359,7 @@ export const schema = {
   sources,
   accounts,
   importBatches,
+  accountCoveragePeriods,
   importAttempts,
   transactionTypeCorrections,
   classificationRules,

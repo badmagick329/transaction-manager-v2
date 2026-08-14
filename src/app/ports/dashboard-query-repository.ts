@@ -71,6 +71,33 @@ export type LatestImport = {
   createdAt: string;
 } | null;
 
+export type DataCoverageAccount = {
+  accountId: number;
+  accountName: string;
+  currencyCode: string;
+  sourceId: number;
+  sourceName: string;
+  required: boolean;
+  latestTransactionDate: string | null;
+  lastImportAt: string | null;
+  coverageIntervals: CoverageInterval[];
+  manualBaseline: CoverageInterval | null;
+};
+
+export type DataCoverage = {
+  accounts: DataCoverageAccount[];
+  commonIntervals: CoverageInterval[];
+  commonCoveredThrough: string | null;
+  blockingAccountIds: number[];
+};
+
+export type CoverageAccountSettings = {
+  accountId: number;
+  required: boolean;
+  baselineStartDate: string | null;
+  baselineEndDate: string | null;
+};
+
 export type CashFlowSourceBreakdown = {
   sourceName: string;
   incomeMinor: number;
@@ -114,7 +141,10 @@ export type DashboardQueryRepository = {
   setCashFlowExcluded(transactionId: number, excluded: boolean): Promise<void>;
   getCashFlowExclusionCount(): Promise<number>;
   getLatestImport(): Promise<LatestImport>;
+  getDataCoverage(): Promise<DataCoverage>;
+  updateCoverageAccountSettings(settings: CoverageAccountSettings): Promise<void>;
   getCashFlowSummary(range: { startDate: string; endDate: string }): Promise<CashFlowSummary[]>;
   getCashFlowTrend(range: { startDate: string; endDate: string; granularity: "month" | "year" }): Promise<CashFlowTrend[]>;
 };
 import type { EconomicType, TransactionType } from "../../core/finance/constants";
+import type { CoverageInterval } from "../data-coverage";

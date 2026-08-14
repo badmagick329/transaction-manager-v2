@@ -1,9 +1,11 @@
 import { and, desc, eq, gte, inArray, like, lt, or, sql, type SQL } from "drizzle-orm";
 import type {
   AccountListItem,
+  CoverageAccountSettings,
   CashFlowSourceBreakdown,
   CashFlowTrend,
   CashFlowSummary,
+  DataCoverage,
   DashboardQueryRepository,
   LatestImport,
   TransactionListItem,
@@ -11,9 +13,10 @@ import type {
   TransactionListOptions,
   TransactionSummary,
 } from "../../app/ports/dashboard-query-repository";
+import { intersectCoverageIntervals, mergeCoverageIntervals } from "../../app/data-coverage";
 import { exclusiveEndDate } from "../../app/date-range";
 import type { AppDatabase } from "./client";
-import { accounts, cashFlowExclusions, importBatches, sources, tagRules, tags, transactionLinks, transactionManualTags, transactionTagRuleMatches, transactions } from "./schema";
+import { accountCoveragePeriods, accounts, cashFlowExclusions, importBatches, rawRecords, sources, tagRules, tags, transactionLinks, transactionManualTags, transactionTagRuleMatches, transactions } from "./schema";
 
 function periodsInRange(startDate: string, endDate: string, granularity: "month" | "year") {
   const startYear = Number(startDate.slice(0, 4));
@@ -213,6 +216,98 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       importedAt: row.importedAt,
       createdAt: row.createdAt,
     };
+  }
+
+  async getDataCoverage(): Promise<DataCoverage> {
+    const [accountRows, coverageRows, activityRows, transactionImportRows, coverageImportRows] = await Promise.all([
+      this.db
+        .select({
+          accountId: accounts.id,
+          accountName: accounts.name,
+          currencyCode: accounts.currencyCode,
+          sourceId: sources.id,
+          sourceName: sources.name,
+          required: accounts.coverageRequired,
+        })
+        .from(accounts)
+        .innerJoin(sources, eq(accounts.sourceId, sources.id))
+        .orderBy(sources.name, accounts.name),
+      this.db.select().from(accountCoveragePeriods).orderBy(accountCoveragePeriods.startDate, accountCoveragePeriods.endDate),
+      this.db
+        .select({ accountId: transactions.accountId, latestTransactionDate: sql<string | null>`max(${transactions.transactionDate})` })
+        .from(transactions)
+        .groupBy(transactions.accountId),
+      this.db
+        .select({ accountId: transactions.accountId, lastImportAt: sql<string | null>`max(${importBatches.importedAt})` })
+        .from(transactions)
+        .innerJoin(rawRecords, eq(transactions.rawRecordId, rawRecords.id))
+        .innerJoin(importBatches, eq(rawRecords.importBatchId, importBatches.id))
+        .groupBy(transactions.accountId),
+      this.db
+        .select({ accountId: accountCoveragePeriods.accountId, lastImportAt: sql<string | null>`max(${importBatches.importedAt})` })
+        .from(accountCoveragePeriods)
+        .innerJoin(importBatches, eq(accountCoveragePeriods.importBatchId, importBatches.id))
+        .where(eq(accountCoveragePeriods.origin, "import"))
+        .groupBy(accountCoveragePeriods.accountId),
+    ]);
+    const activityByAccount = new Map(activityRows.map(row => [row.accountId, row.latestTransactionDate]));
+    const lastImportByAccount = new Map<number, string | null>();
+    for (const row of [...transactionImportRows, ...coverageImportRows]) {
+      const current = lastImportByAccount.get(row.accountId);
+      if (row.lastImportAt && (!current || row.lastImportAt > current)) lastImportByAccount.set(row.accountId, row.lastImportAt);
+    }
+    const periodsByAccount = new Map<number, typeof coverageRows>();
+    for (const period of coverageRows) {
+      const periods = periodsByAccount.get(period.accountId) ?? [];
+      periods.push(period);
+      periodsByAccount.set(period.accountId, periods);
+    }
+    const coverageAccounts = accountRows.map(account => {
+      const periods = periodsByAccount.get(account.accountId) ?? [];
+      const manual = periods.find(period => period.origin === "manual") ?? null;
+      return {
+        ...account,
+        latestTransactionDate: activityByAccount.get(account.accountId) ?? null,
+        lastImportAt: lastImportByAccount.get(account.accountId) ?? null,
+        coverageIntervals: mergeCoverageIntervals(periods.map(period => ({ startDate: period.startDate, endDate: period.endDate }))),
+        manualBaseline: manual ? { startDate: manual.startDate, endDate: manual.endDate } : null,
+      };
+    });
+    const requiredAccounts = coverageAccounts.filter(account => account.required);
+    const blockingAccountIds = requiredAccounts.filter(account => account.coverageIntervals.length === 0).map(account => account.accountId);
+    const commonIntervals = blockingAccountIds.length === 0 && requiredAccounts.length > 0
+      ? intersectCoverageIntervals(requiredAccounts.map(account => account.coverageIntervals))
+      : [];
+    return {
+      accounts: coverageAccounts,
+      commonIntervals,
+      commonCoveredThrough: commonIntervals.at(-1)?.endDate ?? null,
+      blockingAccountIds,
+    };
+  }
+
+  async updateCoverageAccountSettings(settings: CoverageAccountSettings) {
+    const existing = await this.db.query.accounts.findFirst({ where: eq(accounts.id, settings.accountId) });
+    if (!existing) throw new Error("Account not found.");
+    await this.db.transaction(async tx => {
+      const timestamp = new Date().toISOString();
+      await tx.update(accounts).set({ coverageRequired: settings.required, updatedAt: timestamp }).where(eq(accounts.id, settings.accountId));
+      await tx.delete(accountCoveragePeriods).where(and(
+        eq(accountCoveragePeriods.accountId, settings.accountId),
+        eq(accountCoveragePeriods.origin, "manual"),
+      ));
+      if (settings.baselineStartDate && settings.baselineEndDate) {
+        await tx.insert(accountCoveragePeriods).values({
+          accountId: settings.accountId,
+          importBatchId: null,
+          origin: "manual",
+          startDate: settings.baselineStartDate,
+          endDate: settings.baselineEndDate,
+          createdAt: timestamp,
+          updatedAt: timestamp,
+        });
+      }
+    });
   }
 
   async getCashFlowSummary({ startDate, endDate }: { startDate: string; endDate: string }): Promise<CashFlowSummary[]> {

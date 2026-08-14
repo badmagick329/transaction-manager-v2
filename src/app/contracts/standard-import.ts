@@ -7,6 +7,20 @@ const accountContextSchema = z.object({
   currencyCode: z.string().length(3).toUpperCase(),
 });
 
+const isoDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.").refine(value => {
+  const date = new Date(`${value}T00:00:00Z`);
+  return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+}, "Use a valid calendar date.");
+
+const coveragePeriodSchema = z.object({
+  startDate: isoDateSchema,
+  endDate: isoDateSchema,
+  account: accountContextSchema.nullable(),
+}).refine(period => period.startDate <= period.endDate, {
+  message: "Coverage startDate must be on or before endDate.",
+  path: ["endDate"],
+});
+
 export const standardImportRecordSchema = z.object({
   account: accountContextSchema.nullable().optional(),
   externalId: z.string().min(1).nullable().optional(),
@@ -37,6 +51,7 @@ export const standardImportFileSchema = z.object({
     fileName: z.string().min(1),
     exportedAt: z.string().nullable().optional(),
     account: accountContextSchema.nullable().optional(),
+    coveragePeriods: z.array(coveragePeriodSchema).optional(),
   }),
   records: z.array(standardImportRecordSchema),
 }).superRefine((file, context) => {

@@ -54,6 +54,24 @@ export function intersectCoverageFromActivation(intervalSets: CoverageInterval[]
   ))));
 }
 
+export function intersectCoverageForActivePeriods(accounts: Array<{ coverageIntervals: CoverageInterval[]; activeThrough: string | null }>): CoverageInterval[] {
+  if (accounts.length === 0 || accounts.some(account => account.coverageIntervals.length === 0)) return [];
+  const horizon = accounts
+    .flatMap(account => account.coverageIntervals)
+    .map(interval => interval.endDate)
+    .sort()
+    .at(-1);
+  if (!horizon) return [];
+
+  return intersectCoverageFromActivation(accounts.map(account => {
+    const intervals = [...account.coverageIntervals];
+    if (account.activeThrough && account.activeThrough < horizon) {
+      intervals.push({ startDate: nextDate(account.activeThrough), endDate: horizon });
+    }
+    return mergeCoverageIntervals(intervals);
+  }));
+}
+
 export function coverageIntervalForStart(intervals: CoverageInterval[], startDate: string) {
   return intervals.find(interval => interval.startDate <= startDate && startDate <= interval.endDate) ?? null;
 }

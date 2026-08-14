@@ -483,7 +483,7 @@ export function App() {
     }
   };
 
-  const saveCoverageSettings = async (accountId: number, draft: { required: boolean; startDate: string; endDate: string }) => {
+  const saveCoverageSettings = async (accountId: number, draft: { required: boolean; activeThrough: string; startDate: string; endDate: string }) => {
     setSavingCoverageAccountId(accountId);
     setError(null);
     try {
@@ -493,6 +493,7 @@ export function App() {
         body: JSON.stringify({
           accountId,
           required: draft.required,
+          activeThrough: draft.activeThrough || null,
           baselineStartDate: draft.startDate || null,
           baselineEndDate: draft.endDate || null,
         }),

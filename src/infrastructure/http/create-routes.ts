@@ -48,6 +48,7 @@ const coverageDateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value 
 const updateCoverageAccountSchema = z.object({
   accountId: z.number().int().positive(),
   required: z.boolean(),
+  activeThrough: coverageDateSchema.nullable().optional().default(null),
   baselineStartDate: coverageDateSchema.nullable(),
   baselineEndDate: coverageDateSchema.nullable(),
 }).superRefine((value, context) => {

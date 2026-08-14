@@ -42,6 +42,7 @@ export const accounts = sqliteTable(
     kind: text("kind", { enum: accountKinds }).notNull(),
     currencyCode: text("currency_code").notNull(),
     coverageRequired: integer("coverage_required", { mode: "boolean" }).notNull().default(true),
+    coverageActiveThrough: text("coverage_active_through"),
     createdAt: text("created_at").notNull().$defaultFn(isoNow),
     updatedAt: text("updated_at").notNull().$defaultFn(isoNow),
   },

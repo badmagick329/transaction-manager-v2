@@ -79,11 +79,11 @@ describe("verified data coverage", () => {
     const unknown = coverage.accounts.find(item => item.accountName === "Unknown Account")!;
     expect(coverage.blockingAccountIds).toEqual([unknown.accountId]);
 
-    await queries.updateCoverageAccountSettings({ accountId: unknown.accountId, required: true, baselineStartDate: "2026-02-10", baselineEndDate: "2026-02-20" });
+    await queries.updateCoverageAccountSettings({ accountId: unknown.accountId, required: true, activeThrough: null, baselineStartDate: "2026-02-10", baselineEndDate: "2026-02-20" });
     coverage = await queries.getDataCoverage();
     expect(coverage.commonIntervals).toEqual([{ startDate: "2026-02-01", endDate: "2026-02-20" }]);
 
-    await queries.updateCoverageAccountSettings({ accountId: unknown.accountId, required: false, baselineStartDate: null, baselineEndDate: null });
+    await queries.updateCoverageAccountSettings({ accountId: unknown.accountId, required: false, activeThrough: null, baselineStartDate: null, baselineEndDate: null });
     coverage = await queries.getDataCoverage();
     expect(coverage.accounts.find(item => item.accountId === unknown.accountId)?.manualBaseline).toBeNull();
     expect(coverage.commonIntervals).toEqual(known.coverageIntervals);
@@ -104,12 +104,36 @@ describe("verified data coverage", () => {
     let coverage = await queries.getDataCoverage();
     const eurAccount = coverage.accounts.find(item => item.accountName === eur.name)!;
     const gbpAccount = coverage.accounts.find(item => item.accountName === gbp.name)!;
-    await queries.updateCoverageAccountSettings({ accountId: eurAccount.accountId, required: true, baselineStartDate: "2023-02-14", baselineEndDate: "2023-09-05" });
-    await queries.updateCoverageAccountSettings({ accountId: gbpAccount.accountId, required: true, baselineStartDate: "2023-01-18", baselineEndDate: "2026-06-08" });
+    await queries.updateCoverageAccountSettings({ accountId: eurAccount.accountId, required: true, activeThrough: null, baselineStartDate: "2023-02-14", baselineEndDate: "2023-09-05" });
+    await queries.updateCoverageAccountSettings({ accountId: gbpAccount.accountId, required: true, activeThrough: null, baselineStartDate: "2023-01-18", baselineEndDate: "2026-06-08" });
 
     coverage = await queries.getDataCoverage();
     expect(coverage.commonCoveredThrough).toBe("2026-06-08");
     expect(coverage.accounts.every(item => item.coverageIntervals.at(-1)?.endDate === "2026-06-08")).toBe(true);
     expect(coverage.accounts.every(item => item.recommendedBaseline?.startDate === "2023-02-14" && item.recommendedBaseline.endDate === "2026-06-08")).toBe(true);
+  });
+
+  test("an ended required account stops restricting later complete coverage", async () => {
+    const { imports, queries } = await context();
+    const active = account("Active Account");
+    const ended = account("Ended Account");
+    await runImport(imports, importFile(active, [{ startDate: "2026-01-01", endDate: "2026-06-30", account: active }]));
+    await runImport(imports, importFile(ended, [{ startDate: "2026-01-01", endDate: "2026-01-30", account: ended }]));
+
+    let coverage = await queries.getDataCoverage();
+    const endedAccount = coverage.accounts.find(item => item.accountName === ended.name)!;
+    expect(coverage.commonCoveredThrough).toBe("2026-01-30");
+
+    await queries.updateCoverageAccountSettings({
+      accountId: endedAccount.accountId,
+      required: true,
+      activeThrough: "2026-01-30",
+      baselineStartDate: null,
+      baselineEndDate: null,
+    });
+
+    coverage = await queries.getDataCoverage();
+    expect(coverage.accounts.find(item => item.accountId === endedAccount.accountId)?.activeThrough).toBe("2026-01-30");
+    expect(coverage.commonIntervals).toEqual([{ startDate: "2026-01-01", endDate: "2026-06-30" }]);
   });
 });

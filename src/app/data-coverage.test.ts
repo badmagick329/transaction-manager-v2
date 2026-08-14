@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { capEndDateToCoverage, coverageIntervalForStart, intersectCoverageFromActivation, intersectCoverageIntervals, mergeCoverageIntervals } from "./data-coverage";
+import { capEndDateToCoverage, coverageIntervalForStart, intersectCoverageForActivePeriods, intersectCoverageFromActivation, intersectCoverageIntervals, mergeCoverageIntervals } from "./data-coverage";
 import { standardImportFileSchema } from "./contracts/standard-import";
 
 describe("data coverage intervals", () => {
@@ -45,5 +45,25 @@ describe("data coverage intervals", () => {
       [{ startDate: "2024-01-01", endDate: "2026-06-30" }],
       [{ startDate: "2025-11-07", endDate: "2026-07-27" }],
     ])).toEqual([{ startDate: "2024-01-01", endDate: "2026-06-30" }]);
+  });
+
+  test("does not let an ended account restrict coverage after its final active date", () => {
+    expect(intersectCoverageForActivePeriods([
+      { coverageIntervals: [{ startDate: "2024-01-01", endDate: "2026-06-30" }], activeThrough: null },
+      { coverageIntervals: [{ startDate: "2024-01-01", endDate: "2026-01-30" }], activeThrough: "2026-01-30" },
+    ])).toEqual([{ startDate: "2024-01-01", endDate: "2026-06-30" }]);
+  });
+
+  test("retains gaps that occurred before an account ended", () => {
+    expect(intersectCoverageForActivePeriods([
+      { coverageIntervals: [{ startDate: "2024-01-01", endDate: "2026-06-30" }], activeThrough: null },
+      { coverageIntervals: [
+        { startDate: "2024-01-01", endDate: "2025-12-31" },
+        { startDate: "2026-01-10", endDate: "2026-01-30" },
+      ], activeThrough: "2026-01-30" },
+    ])).toEqual([
+      { startDate: "2024-01-01", endDate: "2025-12-31" },
+      { startDate: "2026-01-10", endDate: "2026-06-30" },
+    ]);
   });
 });

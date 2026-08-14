@@ -13,7 +13,7 @@ import type {
   TransactionListOptions,
   TransactionSummary,
 } from "../../app/ports/dashboard-query-repository";
-import { intersectCoverageFromActivation, mergeCoverageIntervals } from "../../app/data-coverage";
+import { intersectCoverageForActivePeriods, mergeCoverageIntervals } from "../../app/data-coverage";
 import { exclusiveEndDate } from "../../app/date-range";
 import type { AppDatabase } from "./client";
 import { accountCoveragePeriods, accounts, cashFlowExclusions, importBatches, rawRecords, sources, tagRules, tags, transactionLinks, transactionManualTags, transactionTagRuleMatches, transactions } from "./schema";
@@ -229,6 +229,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
           sourceName: sources.name,
           sourceKind: sources.kind,
           required: accounts.coverageRequired,
+          activeThrough: accounts.coverageActiveThrough,
         })
         .from(accounts)
         .innerJoin(sources, eq(accounts.sourceId, sources.id))
@@ -306,7 +307,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
     const requiredAccounts = coverageAccounts.filter(account => account.required);
     const blockingAccountIds = requiredAccounts.filter(account => account.coverageIntervals.length === 0).map(account => account.accountId);
     const commonIntervals = blockingAccountIds.length === 0 && requiredAccounts.length > 0
-      ? intersectCoverageFromActivation(requiredAccounts.map(account => account.coverageIntervals))
+      ? intersectCoverageForActivePeriods(requiredAccounts)
       : [];
     return {
       accounts: coverageAccounts,
@@ -321,7 +322,11 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
     if (!existing) throw new Error("Account not found.");
     await this.db.transaction(async tx => {
       const timestamp = new Date().toISOString();
-      await tx.update(accounts).set({ coverageRequired: settings.required, updatedAt: timestamp }).where(eq(accounts.id, settings.accountId));
+      await tx.update(accounts).set({
+        coverageRequired: settings.required,
+        coverageActiveThrough: settings.activeThrough,
+        updatedAt: timestamp,
+      }).where(eq(accounts.id, settings.accountId));
       await tx.delete(accountCoveragePeriods).where(and(
         eq(accountCoveragePeriods.accountId, settings.accountId),
         eq(accountCoveragePeriods.origin, "manual"),

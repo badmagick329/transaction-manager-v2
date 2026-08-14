@@ -78,6 +78,7 @@ export type DataCoverageAccount = {
   sourceId: number;
   sourceName: string;
   required: boolean;
+  activeThrough: string | null;
   earliestTransactionDate: string | null;
   latestTransactionDate: string | null;
   lastImportAt: string | null;
@@ -96,6 +97,7 @@ export type DataCoverage = {
 export type CoverageAccountSettings = {
   accountId: number;
   required: boolean;
+  activeThrough: string | null;
   baselineStartDate: string | null;
   baselineEndDate: string | null;
 };

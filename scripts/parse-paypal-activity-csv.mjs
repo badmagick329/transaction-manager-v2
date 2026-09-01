@@ -92,6 +92,15 @@ function londonTransactionDate(date, time) {
   return `${isoDate}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:${String(second).padStart(2, "0")}${isBst ? "+01:00" : "+00:00"}`;
 }
 
+function coverageFromFilename(fileName) {
+  const match = fileName.match(/-CSR-(\d{4})(\d{2})(\d{2})\d{6}-(\d{4})(\d{2})(\d{2})\d{6}-\d{14}\.csv$/i);
+  if (!match) return null;
+  return {
+    startDate: `${match[1]}-${match[2]}-${match[3]}`,
+    endDate: `${match[4]}-${match[5]}-${match[6]}`,
+  };
+}
+
 function makeRecord(row) {
   const name = row.Name || null;
   const fee = minor(row.Fee);
@@ -120,20 +129,23 @@ function makeRecord(row) {
 await mkdir(outputDirectory, { recursive: true });
 
 for (const inputPath of inputPaths) {
+  const fileName = basename(inputPath);
   const rows = parseCsv(await readFile(inputPath, "utf8"));
   const dates = rows.map((row) => {
     const [day, month, year] = row.Date.split("/");
     return `${year}-${month}-${day}`;
   }).sort();
   const outputPath = join(outputDirectory, `${dates[0]}_${dates.at(-1)}_PayPal.json`);
+  const coverage = coverageFromFilename(fileName);
   const output = {
     source: {
       slug: "paypal",
       name: "PayPal",
       kind: "paypal",
-      fileName: basename(inputPath),
+      fileName,
       exportedAt: null,
       account: null,
+      ...(coverage ? { coveragePeriods: [{ ...coverage, account: null }] } : {}),
     },
     records: rows.map(makeRecord),
   };

@@ -1,4 +1,6 @@
 import { serve } from "bun";
+import { createRecurringRoutes } from "./infrastructure/http/recurring-routes";
+import { DrizzleRecurringPaymentRepository } from "./infrastructure/db/drizzle-recurring-payment-repository";
 import { isAbsolute, relative, resolve } from "node:path";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { createDashboardQueries } from "./app/use-cases/query-dashboard";
@@ -22,12 +24,12 @@ export async function startApp() {
   const classifications = createClassificationActions(classificationRepository);
   const reconciliation = createPayPalPaymentReconciliation(new DrizzlePayPalReconciliationRepository(db));
   const tagging = createTaggingActions(new DrizzleTaggingRepository(db));
-  const routes = createHttpRoutes({
+  const routes = { ...createRecurringRoutes(new DrizzleRecurringPaymentRepository(db)), ...createHttpRoutes({
     queries,
     classifications,
     reconciliation,
     tagging,
-  });
+  }) };
 
   await classificationRepository.ensureTrading212DefaultRules();
   await reconciliation.proposeLinks();

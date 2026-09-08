@@ -3,6 +3,7 @@ import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, T
 import "../index.css";
 import { ClassificationPage } from "./ClassificationPage";
 import { ReconciliationPage } from "./ReconciliationPage";
+import { RecurringPaymentsPage } from "./RecurringPaymentsPage";
 import { TagsPage } from "./TagsPage";
 import { TagPicker } from "./TagPicker";
 import { DatePicker } from "../components/ui/date-picker";
@@ -194,6 +195,7 @@ export function App() {
   const [reviewGroups, setReviewGroups] = useState<ClassificationReviewGroup[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
   const [payPalLinks, setPayPalLinks] = useState<PayPalPaymentLink[]>([]);
+  const [recurringSeed, setRecurringSeed] = useState<number | null>(null);
   const [tags, setTags] = useState<Tag[]>([]);
   const [tagRules, setTagRules] = useState<TagRule[]>([]);
   const [tagRuleDraft, setTagRuleDraft] = useState<TagRuleDraft>(emptyTagRuleDraft);
@@ -574,13 +576,13 @@ export function App() {
             Put completed parser JSON files into <code className="rounded bg-neutral-800 px-1.5 py-0.5">imports/incoming</code>.
           </p>
           <nav className="mt-5 flex flex-wrap gap-2" aria-label="Workspace pages">
-            {(["dashboard", "classification", "reconciliation", "tags", "transactions"] as const).map(item => (
+            {(["dashboard", "classification", "reconciliation", "tags", "recurring", "transactions"] as const).map(item => (
               <button
                 key={item}
                 className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${page === item ? "bg-neutral-100 text-neutral-950" : "border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:bg-neutral-900"}`}
                 onClick={() => setPage(item)}
               >
-                {titleCase(item)}
+                {item === "recurring" ? "Recurring payments" : titleCase(item)}
               </button>
             ))}
           </nav>
@@ -839,6 +841,7 @@ export function App() {
         */}
 
         {page === "reconciliation" ? <ReconciliationPage loading={loading} links={payPalLinks} savingKey={savingKey} updateLink={(linkId, status) => void updatePayPalLink(linkId, status)} /> : null}
+        {page === "recurring" ? <RecurringPaymentsPage accounts={accounts} seedTransactionId={recurringSeed} clearSeed={() => setRecurringSeed(null)} /> : null}
         {page === "tags" ? <TagsPage tags={tags} rules={tagRules} accounts={accounts} loading={loading} savingKey={savingKey} ruleDraft={tagRuleDraft} setRuleDraft={setTagRuleDraft} createTag={createTag} renameTag={renameTag} deleteTag={deleteTag} saveRule={saveTagRule} deleteRule={deleteTagRule} /> : null}
         {/*
         <section className={page === "reconciliation" ? "mt-8" : "hidden"}>
@@ -936,7 +939,7 @@ export function App() {
                   {transactions.map(transaction => (
                     <tr key={transaction.id} className="group bg-neutral-950/30">
                       <td className="whitespace-nowrap px-4 py-3 text-neutral-400">{formatTransactionDate(transaction.transactionDate)}</td>
-                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></td>
+                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}{transaction.economicType === "expense" && !transaction.isExcludedFromCashFlow ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setRecurringSeed(transaction.id); setPage("recurring"); }}>Track as recurring payment</button> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></td>
                       <td className="px-4 py-3 text-neutral-400">{transaction.accountName}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.transactionType)}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.economicType)}</td>

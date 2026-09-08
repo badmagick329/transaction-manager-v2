@@ -356,7 +356,27 @@ export const cashFlowExclusions = sqliteTable(
   }),
 );
 
+export const recurringPayments = sqliteTable("recurring_payments", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(),
+  kind: text("kind", { enum: ["subscription", "bill", "instalment"] }).notNull(),
+  accountId: integer("account_id").notNull().references(() => accounts.id),
+  currencyCode: text("currency_code").notNull(),
+  description: text("description").notNull(),
+  amountMinor: integer("amount_minor").notNull(),
+  frequency: text("frequency", { enum: ["weekly", "monthly", "quarterly", "annual"] }).notNull(),
+  anchorDate: text("anchor_date").notNull(),
+  status: text("status", { enum: ["active", "paused", "cancelled", "dismissed"] }).notNull(),
+});
+
+export const recurringPaymentLinks = sqliteTable("recurring_payment_links", {
+  transactionId: integer("transaction_id").primaryKey().references(() => transactions.id),
+  paymentId: integer("payment_id").notNull().references(() => recurringPayments.id),
+});
+
 export const schema = {
+  recurringPaymentLinks,
+  recurringPayments,
   sources,
   accounts,
   importBatches,

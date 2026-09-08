@@ -85,6 +85,13 @@
       "when": 1786723200000,
       "tag": "0011_account_active_through",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1788828282960,
+      "tag": "0012_cultured_red_hulk",
+      "breakpoints": true
     }
   ]
 }

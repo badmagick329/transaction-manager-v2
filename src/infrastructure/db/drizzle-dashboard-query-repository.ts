@@ -167,7 +167,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
       const toLink = links.find(link => link.toTransactionId === transaction.id && link.status !== "rejected");
       const reconciliationLabel = fromLink
         ? fromLink.status === "confirmed" ? "Linked to PayPal purchase" : "PayPal match pending"
-        : toLink ? toLink.status === "confirmed" ? "Funded by HSBC PayPal payment" : "HSBC match pending" : null;
+        : toLink ? toLink.status === "confirmed" ? "HSBC funding matched" : "HSBC match pending" : null;
       const transactionTags = [...(tagsByTransaction.get(transaction.id)?.values() ?? [])].sort((left, right) => left.name.localeCompare(right.name));
       return { ...transaction, reconciliationLabel, isExcludedFromCashFlow: excludedTransactionIds.has(transaction.id), tags: transactionTags };
     });

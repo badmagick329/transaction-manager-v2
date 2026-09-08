@@ -42,10 +42,10 @@ export class DrizzlePayPalReconciliationRepository implements ReconciliationRepo
       const proposals: Array<{ fromTransactionId: number; toTransactionId: number }> = [];
 
       for (const bankPayment of hsbc) {
-        const matches = paypal.filter(purchase => purchase.currencyCode === bankPayment.currencyCode && purchase.amountMinor === bankPayment.amountMinor && daysBetween(purchase.transactionDate, bankPayment.transactionDate) >= 1 && daysBetween(purchase.transactionDate, bankPayment.transactionDate) <= 4);
+        const matches = paypal.filter(purchase => purchase.currencyCode === bankPayment.currencyCode && purchase.amountMinor === bankPayment.amountMinor && daysBetween(purchase.transactionDate, bankPayment.transactionDate) >= 1 && daysBetween(purchase.transactionDate, bankPayment.transactionDate) <= 5);
         if (matches.length !== 1) continue;
         const purchase = matches[0]!;
-        const reverseMatches = hsbc.filter(otherPayment => otherPayment.currencyCode === purchase.currencyCode && otherPayment.amountMinor === purchase.amountMinor && daysBetween(purchase.transactionDate, otherPayment.transactionDate) >= 1 && daysBetween(purchase.transactionDate, otherPayment.transactionDate) <= 4);
+        const reverseMatches = hsbc.filter(otherPayment => otherPayment.currencyCode === purchase.currencyCode && otherPayment.amountMinor === purchase.amountMinor && daysBetween(purchase.transactionDate, otherPayment.transactionDate) >= 1 && daysBetween(purchase.transactionDate, otherPayment.transactionDate) <= 5);
         if (reverseMatches.length !== 1) continue;
         proposals.push({ fromTransactionId: bankPayment.id, toTransactionId: purchase.id });
       }
@@ -57,7 +57,7 @@ export class DrizzlePayPalReconciliationRepository implements ReconciliationRepo
         linkType: "funds" as const,
         status: "pending" as const,
         confidenceScore: 100,
-        matchReason: "Exact GBP/USD amount; PayPal purchase 1–4 days before HSBC PAYPAL PAYMENT.",
+        matchReason: "Same currency and amount; PayPal purchase 1–5 calendar days before HSBC PAYPAL PAYMENT.",
         createdBy: "system_rule" as const,
         createdAt: timestamp,
         updatedAt: timestamp,

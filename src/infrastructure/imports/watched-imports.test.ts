@@ -223,7 +223,7 @@ describe("watched bank imports", () => {
     hsbcImport.source.name = "HSBC";
     const paypalImport = {
       source: { slug: "paypal", name: "PayPal", kind: "paypal" as const, fileName: "activity.csv", account: null },
-      records: [record({ externalId: "paypal-merchant", description: "LinkedIn Ireland", amountMinor: -2999, transactionDate: "2026-02-16", transactionType: "purchase", rawPayload: { row: "2" }, account: { externalId: null, name: "PayPal GBP balance", currencyCode: "GBP" } })],
+      records: [record({ externalId: "paypal-merchant", description: "LinkedIn Ireland", amountMinor: -2999, transactionDate: "2026-02-13", transactionType: "purchase", rawPayload: { row: "2" }, account: { externalId: null, name: "PayPal GBP balance", currencyCode: "GBP" } })],
     };
     await importStandardFile(repository, { fileName: "hsbc.json", fileHash: "hsbc-paypal-match", importFile: hsbcImport });
     await importStandardFile(repository, { fileName: "paypal.json", fileHash: "paypal-match", importFile: paypalImport });
@@ -243,6 +243,7 @@ describe("watched bank imports", () => {
     expect((await dashboard.getCashFlowTrend({ startDate: "2026-02-01", endDate: "2026-02-28", granularity: "month" }))[0]?.periods[0]?.expenseMinor).toBe(-5998);
     expect((await dashboard.summarizeTransactions())[0]?.expenseMinor).toBe(-5998);
     await reconciliation.setPayPalPaymentLinkStatus(link!.id, "confirmed");
+    expect((await dashboard.listTransactions()).find(t => t.description === "LinkedIn Ireland")?.reconciliationLabel).toBe("HSBC funding matched");
     expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-2999);
     expect((await dashboard.getCashFlowTrend({ startDate: "2026-02-01", endDate: "2026-02-28", granularity: "month" }))[0]?.periods[0]?.expenseMinor).toBe(-2999);
     expect((await dashboard.summarizeTransactions())[0]?.expenseMinor).toBe(-2999);
@@ -250,6 +251,25 @@ describe("watched bank imports", () => {
     expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-5998);
     await reconciliation.setPayPalPaymentLinkStatus(link!.id, "pending");
     expect((await dashboard.getCashFlowSummary({ startDate: "2026-02-01", endDate: "2026-02-28" }))[0]?.expenseMinor).toBe(-5998);
+  });
+
+  test.each([
+    { name: "six-day delay", bankDates: ["2026-03-07"], purchaseDates: ["2026-03-01"] },
+    { name: "two bank payments including day five", bankDates: ["2026-03-05", "2026-03-06"], purchaseDates: ["2026-03-01"] },
+    { name: "two purchases including day five", bankDates: ["2026-03-06"], purchaseDates: ["2026-03-01", "2026-03-02"] },
+  ])("leaves $name unmatched", async ({ bankDates, purchaseDates }) => {
+    const { db, repository } = await createTestContext();
+    const hsbcImport = importFile(bankDates.map((transactionDate, index) => record({ externalId: `bank-${index}`, description: "PAYPAL PAYMENT", amountMinor: -1799, transactionDate })));
+    hsbcImport.source.slug = "hsbc";
+    const paypalImport = {
+      source: { slug: "paypal", name: "PayPal", kind: "paypal" as const, fileName: "activity.csv", account: null },
+      records: purchaseDates.map((transactionDate, index) => record({ externalId: `purchase-${index}`, description: "Spotify AB", amountMinor: -1799, transactionDate, transactionType: "purchase", account: { externalId: null, name: "PayPal GBP balance", currencyCode: "GBP" } })),
+    };
+    await importStandardFile(repository, { fileName: "bank.json", fileHash: "bank-window", importFile: hsbcImport });
+    await importStandardFile(repository, { fileName: "paypal.json", fileHash: "paypal-window", importFile: paypalImport });
+    const reconciliation = new DrizzlePayPalReconciliationRepository(db);
+    expect(await reconciliation.proposePayPalPaymentLinks()).toBe(0);
+    expect(await reconciliation.listPayPalPaymentLinks()).toHaveLength(0);
   });
 
   test("does not propose ambiguous PayPal matches", async () => {

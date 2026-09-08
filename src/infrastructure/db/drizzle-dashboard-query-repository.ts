@@ -15,6 +15,8 @@ import type {
 } from "../../app/ports/dashboard-query-repository";
 import { intersectCoverageForActivePeriods, mergeCoverageIntervals } from "../../app/data-coverage";
 import { exclusiveEndDate } from "../../app/date-range";
+import { recurringOverview } from "../../app/recurring-payments";
+import { DrizzleRecurringPaymentRepository } from "./drizzle-recurring-payment-repository";
 import type { AppDatabase } from "./client";
 import { accountCoveragePeriods, accounts, cashFlowExclusions, importBatches, rawRecords, sources, tagRules, tags, transactionLinks, transactionManualTags, transactionTagRuleMatches, transactions } from "./schema";
 
@@ -133,7 +135,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
     const transactionRows = options?.limit ? await orderedQuery.limit(options.limit).offset(options.offset ?? 0) : await orderedQuery;
     if (transactionRows.length === 0) return [];
     const transactionIds = transactionRows.map(transaction => transaction.id);
-    const [links, exclusions, manualTagRows, automaticTagRows] = await Promise.all([
+    const [links, exclusions, manualTagRows, automaticTagRows, recurringSnapshot] = await Promise.all([
       this.db.select().from(transactionLinks).where(and(
         eq(transactionLinks.linkType, "funds"),
         eq(transactionLinks.createdBy, "system_rule"),
@@ -149,7 +151,14 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         .innerJoin(tagRules, eq(transactionTagRuleMatches.tagRuleId, tagRules.id))
         .innerJoin(tags, eq(tagRules.tagId, tags.id))
         .where(inArray(transactionTagRuleMatches.transactionId, transactionIds)),
+      new DrizzleRecurringPaymentRepository(this.db).snapshot(),
     ]);
+    // Use the same associations as the subscription page, including provider switches and ambiguity.
+    const recurringByTransaction = new Map<number, { id: number; name: string }>();
+    for (const payment of recurringOverview(recurringSnapshot).payments) {
+      if (payment.status === "dismissed") continue;
+      for (const transaction of payment.transactions) recurringByTransaction.set(transaction.id, { id: payment.id, name: payment.name });
+    }
     const excludedTransactionIds = new Set(exclusions.map(exclusion => exclusion.transactionId));
     const tagsByTransaction = new Map<number, Map<number, { id: number; name: string; manual: boolean; automatic: boolean }>>();
     for (const assignment of manualTagRows) {
@@ -169,7 +178,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         ? fromLink.status === "confirmed" ? "Linked to PayPal purchase" : "PayPal match pending"
         : toLink ? toLink.status === "confirmed" ? "HSBC funding matched" : "HSBC match pending" : null;
       const transactionTags = [...(tagsByTransaction.get(transaction.id)?.values() ?? [])].sort((left, right) => left.name.localeCompare(right.name));
-      return { ...transaction, reconciliationLabel, isExcludedFromCashFlow: excludedTransactionIds.has(transaction.id), tags: transactionTags };
+      return { ...transaction, recurringPayment: recurringByTransaction.get(transaction.id) ?? null, reconciliationLabel, isExcludedFromCashFlow: excludedTransactionIds.has(transaction.id), tags: transactionTags };
     });
   }
 

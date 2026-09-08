@@ -9,8 +9,14 @@ const field = "w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 p
 const button = "rounded-lg border border-neutral-700 px-3 py-2 text-sm hover:bg-neutral-800 disabled:opacity-50";
 const blank = (accounts: Account[]): Draft => ({ name: "", kind: "subscription", accountId: accounts[0]?.id ?? 0, currencyCode: accounts[0]?.currencyCode ?? "GBP", description: "", amountMinor: 0, frequency: "monthly", anchorDate: new Date().toISOString().slice(0, 10), status: "active" });
 
-export function RecurringPaymentsPage({ accounts, seedTransactionId, clearSeed }: { accounts: Account[]; seedTransactionId: number | null; clearSeed: () => void }) {
+export function RecurringPaymentsPage({ accounts, seedTransactionId, clearSeed, selectedPaymentId }: { selectedPaymentId: number | null; accounts: Account[]; seedTransactionId: number | null; clearSeed: () => void }) {
   const [data, setData] = useState<Overview | null>(null);
+  useEffect(() => {
+    if (selectedPaymentId === null || !data) return;
+    const card = document.getElementById(`recurring-payment-${selectedPaymentId}`);
+    card?.scrollIntoView({ behavior: "smooth", block: "center" });
+    card?.focus({ preventScroll: true });
+  }, [data, selectedPaymentId]);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [amount, setAmount] = useState("");
   const [error, setError] = useState("");
@@ -111,7 +117,7 @@ export function RecurringPaymentsPage({ accounts, seedTransactionId, clearSeed }
     </form>}
     {!data ? <p className="text-neutral-400">Loading recurring payments…</p> : <>
       <div className="space-y-3"><h3 className="font-medium">Tracked payments</h3>{data.payments.filter(p => p.status !== "dismissed").length === 0 && <p className="text-sm text-neutral-400">No recurring payments yet. Add one manually or review a suggestion below.</p>}
-        {data.payments.filter(p => p.status !== "dismissed").map(p => <article key={p.id} className="rounded-xl border border-neutral-800 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-medium">{p.name}</h4><p className="text-sm text-neutral-400">{titleCase(p.kind)} · {p.frequency} · {p.status} · {accounts.find(a => a.id === p.currentMethod.accountId)?.name}</p><p className="mt-2 text-sm">Expected {formatMoney(p.amountMinor, p.currencyCode)} · {p.nextDate ? `Next expected: ${p.nextDate}` : "Schedule paused"}</p><p className="text-sm text-neutral-400">Last payment: {p.transactions.at(-1) ? `${p.transactions.at(-1)!.transactionDate.slice(0, 10)} · ${formatMoney(Math.abs(p.transactions.at(-1)!.amountMinor), p.currencyCode)}` : "No matching payment"}</p></div><button className={button} disabled={busy} onClick={() => { clearSeed(); edit(p); }}>Edit</button><button className={button} disabled={busy} onClick={() => startMethod({ paymentId: p.id, accountId: p.currentMethod.accountId, description: p.currentMethod.description, effectiveDate: new Date().toISOString().slice(0, 10) }, p.currencyCode)}>Change payment method</button></div>
+        {data.payments.filter(p => p.status !== "dismissed").map(p => <article key={p.id} id={`recurring-payment-${p.id}`} tabIndex={-1} className="rounded-xl border border-neutral-800 p-4 focus:outline focus:outline-2 focus:outline-sky-500"><div className="flex flex-wrap items-start justify-between gap-3"><div><h4 className="font-medium">{p.name}</h4><p className="text-sm text-neutral-400">{titleCase(p.kind)} · {p.frequency} · {p.status} · {accounts.find(a => a.id === p.currentMethod.accountId)?.name}</p><p className="mt-2 text-sm">Expected {formatMoney(p.amountMinor, p.currencyCode)} · {p.nextDate ? `Next expected: ${p.nextDate}` : "Schedule paused"}</p><p className="text-sm text-neutral-400">Last payment: {p.transactions.at(-1) ? `${p.transactions.at(-1)!.transactionDate.slice(0, 10)} · ${formatMoney(Math.abs(p.transactions.at(-1)!.amountMinor), p.currencyCode)}` : "No matching payment"}</p></div><button className={button} disabled={busy} onClick={() => { clearSeed(); edit(p); }}>Edit</button><button className={button} disabled={busy} onClick={() => startMethod({ paymentId: p.id, accountId: p.currentMethod.accountId, description: p.currentMethod.description, effectiveDate: new Date().toISOString().slice(0, 10) }, p.currencyCode)}>Change payment method</button></div>
           {p.priceChanged && <p className="mt-2 text-sm text-amber-300">Latest amount differs from your expected amount. Review before updating the schedule.</p>}
           {p.needsReview && <p className="mt-2 text-sm text-amber-300">Multiple possible matches. Ambiguous payments have not been attached.</p>}
           {p.paymentMissing && <p className="mt-2 text-sm text-amber-300">Expected payment not found in covered statements. Check its status.</p>}

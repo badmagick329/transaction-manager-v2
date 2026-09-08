@@ -9,6 +9,7 @@ import { DrizzleRecurringPaymentRepository } from "./drizzle-recurring-payment-r
 import { accounts, cashFlowExclusions, sources, transactions } from "./schema";
 import { createRecurringRoutes } from "../http/recurring-routes";
 import { recurringOverview } from "../../app/recurring-payments";
+import { DrizzleDashboardQueryRepository } from "./drizzle-dashboard-query-repository";
 
 test("migration, persistence, exclusion changes, linking, and route validation", async () => {
   const db = createDb(join(mkdtempSync(join(tmpdir(), "recurring-test-")), "app.db"));
@@ -17,6 +18,8 @@ test("migration, persistence, exclusion changes, linking, and route validation",
   const account = db.insert(accounts).values({ sourceId: source.id, name: "Current", kind: "bank_account", currencyCode: "GBP" }).returning().get();
   const rows = db.insert(transactions).values(["2026-01-01", "2026-02-01", "2026-03-01"].map(transactionDate => ({ sourceId: source.id, accountId: account.id, transactionDate, description: "STREAMING", amountMinor: -999, currencyCode: "GBP", transactionType: "purchase" as const, economicType: "expense" as const }))).returning().all();
   const repository = new DrizzleRecurringPaymentRepository(db);
+  const dashboard = new DrizzleDashboardQueryRepository(db);
+  expect((await dashboard.listTransactions())[0].recurringPayment).toBeNull();
   const routes = createRecurringRoutes(repository);
   const post = (body: unknown) => routes["/api/recurring-payments"].POST(new Request("http://localhost/api/recurring-payments", { method: "POST", body: JSON.stringify(body) }));
   const suggestion = recurringOverview(await repository.snapshot()).suggestions[0];
@@ -29,10 +32,14 @@ test("migration, persistence, exclusion changes, linking, and route validation",
   const saved = await response.json();
   await repository.save({ ...saved, name: "Streaming service", status: "paused" }, saved.id);
   expect((await new DrizzleRecurringPaymentRepository(db).snapshot()).payments[0].name).toBe("Streaming service");
+  expect((await dashboard.listTransactions()).every(t => t.recurringPayment?.id === saved.id && t.recurringPayment.name === "Streaming service")).toBe(true);
   expect(recurringOverview(await repository.snapshot()).suggestions).toHaveLength(0);
   db.insert(cashFlowExclusions).values({ transactionId: rows[1].id }).run();
   db.update(transactions).set({ economicType: "transfer" }).where(eq(transactions.id, rows[2].id)).run();
   expect(recurringOverview(await repository.snapshot()).payments[0].transactions).toHaveLength(1);
+  const afterExclusion = await dashboard.listTransactions();
+  expect(afterExclusion.find(t => t.id === rows[1].id).recurringPayment).toBeNull();
+  expect(afterExclusion.find(t => t.id === rows[2].id).recurringPayment).toBeNull();
   await expect(repository.link(rows[1].id, saved.id)).rejects.toThrow("eligible expense");
   await repository.link(rows[0].id, saved.id);
   expect((await repository.snapshot()).links).toEqual([{ transactionId: rows[0].id, paymentId: saved.id }]);
@@ -46,6 +53,7 @@ test("migration, persistence, exclusion changes, linking, and route validation",
   const reloaded = await new DrizzleRecurringPaymentRepository(db).snapshot();
   expect(reloaded.methods).toHaveLength(1);
   expect(recurringOverview(reloaded).payments[0].transactions).toHaveLength(2);
+  expect((await dashboard.listTransactions({ description: "STREAMING HSBC" }))[0].recurringPayment).toEqual({ id: saved.id, name: "Streaming service" });
   expect(reloaded.payments[0].accountId).toBe(account.id);
   expect((await post({ ...saved, accountId: newAccount.id })).status).toBe(400);
   expect((await change({ ...method, description: "STREAMING corrected" })).status).toBe(200);

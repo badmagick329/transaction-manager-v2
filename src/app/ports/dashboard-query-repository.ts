@@ -22,6 +22,7 @@ export type TransactionListItem = {
   economicType: string;
   status: string;
   reconciliationLabel: string | null;
+  recurringPayment: { id: number; name: string } | null;
   isExcludedFromCashFlow: boolean;
   tags: Array<{ id: number; name: string; manual: boolean; automatic: boolean }>;
 };

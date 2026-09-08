@@ -195,6 +195,7 @@ export function App() {
   const [reviewGroups, setReviewGroups] = useState<ClassificationReviewGroup[]>([]);
   const [rules, setRules] = useState<ClassificationRule[]>([]);
   const [payPalLinks, setPayPalLinks] = useState<PayPalPaymentLink[]>([]);
+  const [selectedRecurringId, setSelectedRecurringId] = useState<number | null>(null);
   const [recurringSeed, setRecurringSeed] = useState<number | null>(null);
   const [tags, setTags] = useState<Tag[]>([]);
   const [tagRules, setTagRules] = useState<TagRule[]>([]);
@@ -841,7 +842,7 @@ export function App() {
         */}
 
         {page === "reconciliation" ? <ReconciliationPage loading={loading} links={payPalLinks} savingKey={savingKey} updateLink={(linkId, status) => void updatePayPalLink(linkId, status)} /> : null}
-        {page === "recurring" ? <RecurringPaymentsPage accounts={accounts} seedTransactionId={recurringSeed} clearSeed={() => setRecurringSeed(null)} /> : null}
+        {page === "recurring" ? <RecurringPaymentsPage selectedPaymentId={selectedRecurringId} accounts={accounts} seedTransactionId={recurringSeed} clearSeed={() => setRecurringSeed(null)} /> : null}
         {page === "tags" ? <TagsPage tags={tags} rules={tagRules} accounts={accounts} loading={loading} savingKey={savingKey} ruleDraft={tagRuleDraft} setRuleDraft={setTagRuleDraft} createTag={createTag} renameTag={renameTag} deleteTag={deleteTag} saveRule={saveTagRule} deleteRule={deleteTagRule} /> : null}
         {/*
         <section className={page === "reconciliation" ? "mt-8" : "hidden"}>
@@ -939,7 +940,7 @@ export function App() {
                   {transactions.map(transaction => (
                     <tr key={transaction.id} className="group bg-neutral-950/30">
                       <td className="whitespace-nowrap px-4 py-3 text-neutral-400">{formatTransactionDate(transaction.transactionDate)}</td>
-                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}{transaction.economicType === "expense" && !transaction.isExcludedFromCashFlow ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setRecurringSeed(transaction.id); setPage("recurring"); }}>Track as recurring payment</button> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></td>
+                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}{transaction.recurringPayment ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setRecurringSeed(null); setSelectedRecurringId(transaction.recurringPayment!.id); setPage("recurring"); }}>Tracked: {transaction.recurringPayment.name}</button> : transaction.economicType === "expense" && !transaction.isExcludedFromCashFlow ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setSelectedRecurringId(null); setRecurringSeed(transaction.id); setPage("recurring"); }}>Track as recurring payment</button> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></td>
                       <td className="px-4 py-3 text-neutral-400">{transaction.accountName}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.transactionType)}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.economicType)}</td>

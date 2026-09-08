@@ -26,7 +26,7 @@ for (let index = 0; index < arguments_.length; index += 1) {
 if (inputPaths.length === 0) throw new Error("Provide at least one generated import JSON file.");
 if (!host) throw new Error("Provide --host <ssh-host> or set IMPORT_SERVER.");
 
-const localPaths = inputPaths.map(resolve);
+const localPaths = inputPaths.map(inputPath => resolve(inputPath));
 await Promise.all(localPaths.map(validateImportFile));
 await run("ssh", [host, `mkdir -p "$HOME/${remoteIncomingDirectory}"`]);
 

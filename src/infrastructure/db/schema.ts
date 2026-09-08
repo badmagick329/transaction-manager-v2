@@ -374,7 +374,16 @@ export const recurringPaymentLinks = sqliteTable("recurring_payment_links", {
   paymentId: integer("payment_id").notNull().references(() => recurringPayments.id),
 });
 
+export const recurringPaymentMethods = sqliteTable("recurring_payment_methods", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  paymentId: integer("payment_id").notNull().references(() => recurringPayments.id),
+  accountId: integer("account_id").notNull().references(() => accounts.id),
+  description: text("description").notNull(),
+  effectiveDate: text("effective_date").notNull(),
+}, table => ({ effectiveUnique: uniqueIndex("recurring_methods_payment_date_unique").on(table.paymentId, table.effectiveDate) }));
+
 export const schema = {
+  recurringPaymentMethods,
   recurringPaymentLinks,
   recurringPayments,
   sources,

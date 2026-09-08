@@ -92,6 +92,13 @@
       "when": 1788828282960,
       "tag": "0012_cultured_red_hulk",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1788829733315,
+      "tag": "0013_slimy_the_renegades",
+      "breakpoints": true
     }
   ]
 }

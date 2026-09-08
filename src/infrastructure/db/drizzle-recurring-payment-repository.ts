@@ -1,21 +1,36 @@
 import { and, eq, isNull, lt } from "drizzle-orm";
-import type { RecurringPaymentInput, RecurringPaymentRepository } from "../../app/recurring-payments";
+import { recurringDescription, type PaymentMethodChange, type RecurringPaymentInput, type RecurringPaymentRepository } from "../../app/recurring-payments";
 import type { AppDatabase } from "./client";
-import { accounts, accountCoveragePeriods, cashFlowExclusions, recurringPayments, recurringPaymentLinks, transactions } from "./schema";
+import { accounts, accountCoveragePeriods, cashFlowExclusions, recurringPayments, recurringPaymentLinks, recurringPaymentMethods, transactions } from "./schema";
 
 // Keep user tracking decisions separate from immutable imported payment evidence.
 export class DrizzleRecurringPaymentRepository implements RecurringPaymentRepository {
   constructor(private readonly db: AppDatabase) {}
   async snapshot() {
-    const [payments, expenses, coverage, links] = await Promise.all([
+    const [payments, expenses, coverage, links, methods] = await Promise.all([
       this.db.select().from(recurringPayments),
       this.db.select({ id: transactions.id, accountId: transactions.accountId, currencyCode: transactions.currencyCode, description: transactions.description, amountMinor: transactions.amountMinor, transactionDate: transactions.transactionDate })
         .from(transactions).leftJoin(cashFlowExclusions, eq(cashFlowExclusions.transactionId, transactions.id))
         .where(and(eq(transactions.economicType, "expense"), eq(transactions.status, "posted"), lt(transactions.amountMinor, 0), isNull(cashFlowExclusions.id))),
       this.db.select({ accountId: accountCoveragePeriods.accountId, startDate: accountCoveragePeriods.startDate, endDate: accountCoveragePeriods.endDate }).from(accountCoveragePeriods),
       this.db.select().from(recurringPaymentLinks),
+      this.db.select().from(recurringPaymentMethods),
     ]);
-    return { payments, transactions: expenses, coverage, links };
+    return { payments, transactions: expenses, coverage, links, methods };
+  }
+  async changeMethod(input: PaymentMethodChange) {
+    const payment = await this.db.select().from(recurringPayments).where(eq(recurringPayments.id, input.paymentId)).get();
+    if (!payment || payment.status === "dismissed") throw new Error("Choose a tracked recurring payment.");
+    const account = await this.db.select().from(accounts).where(eq(accounts.id, input.accountId)).get();
+    if (!account) throw new Error("Account not found.");
+    const { previousEffectiveDate, ...change } = input;
+    const values = { ...change, description: recurringDescription(input.description) };
+    if (previousEffectiveDate !== undefined) {
+      const result = await this.db.update(recurringPaymentMethods).set(values).where(and(eq(recurringPaymentMethods.paymentId, input.paymentId), eq(recurringPaymentMethods.effectiveDate, previousEffectiveDate))).returning().get();
+      if (!result) throw new Error("Payment-method change not found. Reload and try again.");
+      return;
+    }
+    await this.db.insert(recurringPaymentMethods).values(values).onConflictDoUpdate({ target: [recurringPaymentMethods.paymentId, recurringPaymentMethods.effectiveDate], set: { accountId: values.accountId, description: values.description } });
   }
   async link(transactionId: number, paymentId: number) {
     const snapshot = await this.snapshot();
@@ -29,6 +44,9 @@ export class DrizzleRecurringPaymentRepository implements RecurringPaymentReposi
     const account = await this.db.select().from(accounts).where(eq(accounts.id, input.accountId)).get();
     if (!account) throw new Error("Account not found.");
     if (id !== undefined) {
+      const existing = await this.db.select().from(recurringPayments).where(eq(recurringPayments.id, id)).get();
+      if (!existing) throw new Error("Recurring payment not found.");
+      if (input.accountId !== existing.accountId || recurringDescription(input.description) !== recurringDescription(existing.description) || input.currencyCode !== existing.currencyCode) throw new Error("Use Change payment method to preserve payment history. The subscription currency cannot be changed.");
       const result = await this.db.update(recurringPayments).set(input).where(eq(recurringPayments.id, id)).returning().get();
       if (!result) throw new Error("Recurring payment not found.");
       return result;

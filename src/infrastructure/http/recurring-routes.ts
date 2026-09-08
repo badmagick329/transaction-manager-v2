@@ -18,6 +18,15 @@ const inputSchema = z.object({
 });
 export function createRecurringRoutes(repository: RecurringPaymentRepository) {
   return {
+    "/api/recurring-payments/method": {
+      POST: async (request: Request) => {
+        try {
+          const input = z.object({ paymentId: z.number().int().positive(), accountId: z.number().int().positive(), description: inputSchema.shape.description, effectiveDate: inputSchema.shape.anchorDate, previousEffectiveDate: inputSchema.shape.anchorDate.optional() }).parse(await request.json());
+          await repository.changeMethod(input as import("../../app/recurring-payments").PaymentMethodChange);
+          return Response.json({ ok: true });
+        } catch (error) { return Response.json({ error: error instanceof z.ZodError ? "Choose a payment, account, description, and valid switch date." : error instanceof Error ? error.message : "Unable to change payment method." }, { status: 400 }); }
+      },
+    },
     "/api/recurring-payments/link": {
       POST: async (request: Request) => {
         try {

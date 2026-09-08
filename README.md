@@ -1,5 +1,7 @@
 # Transaction Manager
 
+See [notes/docs/README.md](notes/docs/README.md) for project documentation.
+
 ## Home server deployment
 
 Copy `.env.example` to `.env` to customize deployment settings. `HOST_PORT` selects the port exposed on your LAN and Tailscale network. The app listens on `0.0.0.0` inside the container; this Compose configuration does not add public ingress.

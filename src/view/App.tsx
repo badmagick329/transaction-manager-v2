@@ -184,6 +184,7 @@ function coverageStartSuggestion(coverage: DataCoverage | null, selectedStart: s
 const emptyTagRuleDraft: TagRuleDraft = { tagId: "", sourceId: "", description: "", matchMode: "exact", direction: "outflow" };
 
 export function App() {
+  const [navigationOpen, setNavigationOpen] = useState(false);
   const [initialPreferences] = useState(() => readUrlState(window.location.search, loadUiPreferences(browserPreferenceStorage())));
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
@@ -627,16 +628,17 @@ export function App() {
     transactionFilters.hideTrading212InterestCashbackAndDividends && "Trading 212 rewards hidden",
     transactionCompleteDataOnly && "Verified data only",
   ].filter(Boolean);
+  const transactionDetails = (transaction: Transaction) => <>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}{transaction.recurringPayment ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setRecurringSeed(null); setSelectedRecurringId(transaction.recurringPayment!.id); setPage("recurring"); }}>Tracked: {transaction.recurringPayment.name}</button> : transaction.economicType === "expense" && !transaction.isExcludedFromCashFlow ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setSelectedRecurringId(null); setRecurringSeed(transaction.id); setPage("recurring"); }}>Track as recurring payment</button> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></>;
   const advancedFilterCount = activeFilterLabels.length;
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100">
-      <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-8 md:pl-64">
-        <header className="mb-6 border-b border-neutral-800 pb-4 md:fixed md:inset-y-0 md:left-0 md:mb-0 md:w-56 md:border-b-0 md:border-r md:bg-neutral-950 md:p-5">
-          <h1 className="text-lg font-semibold tracking-tight">Transaction Manager</h1>
-          <nav className="mt-6 flex flex-wrap gap-1 md:flex-col" aria-label="Workspace pages">
+      <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-8 min-[1200px]:pl-64">
+        <header className="mb-6 border-b border-neutral-800 pb-4 min-[1200px]:fixed min-[1200px]:inset-y-0 min-[1200px]:left-0 min-[1200px]:mb-0 min-[1200px]:w-56 min-[1200px]:border-b-0 min-[1200px]:border-r min-[1200px]:bg-neutral-950 min-[1200px]:p-5">
+          <div className="flex items-center justify-between gap-3"><h1 className="text-lg font-semibold tracking-tight">Transaction Manager</h1><Button variant="outline" className="min-[1200px]:hidden" aria-expanded={navigationOpen} aria-controls="workspace-navigation" onClick={() => setNavigationOpen(open => !open)}>{navigationOpen ? "Close menu" : "Menu"}</Button></div>
+          <nav id="workspace-navigation" className={`${navigationOpen ? "flex" : "hidden"} mt-4 flex-col gap-1 min-[1200px]:mt-6 min-[1200px]:flex`} aria-label="Workspace pages">
             {(["dashboard", "transactions", "recurring", "classification", "reconciliation", "tags"] as const).map(item => <div key={item}>
-              {item === "classification" && <p className="mb-2 mt-6 hidden px-3 text-xs text-neutral-500 md:block">Manage data</p>}
-              <Button variant={page === item ? "secondary" : "ghost"} className="w-full justify-start" aria-current={page === item ? "page" : undefined} onClick={() => { setPage(item); window.scrollTo({ top: 0 }); }}>{item === "recurring" ? "Recurring payments" : titleCase(item)}</Button>
+              {item === "classification" && <p className="mb-2 mt-6 hidden px-3 text-xs text-neutral-500 min-[1200px]:block">Manage data</p>}
+              <Button variant={page === item ? "secondary" : "ghost"} className="w-full justify-start" aria-current={page === item ? "page" : undefined} onClick={() => { setNavigationOpen(false); setPage(item); window.scrollTo({ top: 0 }); }}>{item === "recurring" ? "Recurring payments" : titleCase(item)}</Button>
             </div>)}
           </nav>
         </header>
@@ -766,9 +768,9 @@ export function App() {
                     </div>
                     <details className="mt-4"><summary className="cursor-pointer text-sm text-neutral-400">View period totals</summary><div className="mt-3 overflow-x-auto rounded-lg border border-neutral-800">
                       <table className="w-full min-w-[560px] text-left text-sm">
-                        <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500"><tr><th className="px-4 py-3 font-medium">{trendGranularity === "month" ? "Month" : "Year"}</th><th className="px-4 py-3 text-right font-medium">Income</th><th className="px-4 py-3 text-right font-medium">Expenses</th><th className="px-4 py-3 text-right font-medium">Net cash flow</th></tr></thead>
+                        <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500"><tr><th className="px-4 py-3 font-medium">{trendGranularity === "month" ? "Month" : "Year"}</th><th className="px-4 py-3 text-right font-medium">Net cash flow</th><th className="px-4 py-3 text-right font-medium">Expenses</th><th className="px-4 py-3 text-right font-medium">Income</th></tr></thead>
                         <tbody className="divide-y divide-neutral-800">
-                          {trend.periods.map(period => <tr key={period.period} className="bg-neutral-950/30"><td className="px-4 py-3 text-neutral-100"><a className="underline decoration-neutral-600 underline-offset-4 hover:text-emerald-300" href={writeUrlState({ ...currentPreferences, page: "transactions", transactions: transactionsForPeriod(period.period, trend.currencyCode) })} onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openPeriod(period.period, trend.currencyCode); } }}>{period.label}</a></td><td className="px-4 py-3 text-right text-emerald-300">{formatMoney(period.incomeMinor, trend.currencyCode)}</td><td className="px-4 py-3 text-right text-red-300">{formatMoney(Math.abs(period.expenseMinor), trend.currencyCode)}</td><td className={`px-4 py-3 text-right ${period.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(period.netCashFlowMinor, trend.currencyCode)}</td></tr>)}
+                          {trend.periods.map(period => <tr key={period.period} className="bg-neutral-950/30"><td className="px-4 py-3 text-neutral-100"><a className="underline decoration-neutral-600 underline-offset-4 hover:text-emerald-300" href={writeUrlState({ ...currentPreferences, page: "transactions", transactions: transactionsForPeriod(period.period, trend.currencyCode) })} onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openPeriod(period.period, trend.currencyCode); } }}>{period.label}</a></td><td className={`px-4 py-3 text-right ${period.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(period.netCashFlowMinor, trend.currencyCode)}</td><td className="px-4 py-3 text-right text-red-300">{formatMoney(Math.abs(period.expenseMinor), trend.currencyCode)}</td><td className="px-4 py-3 text-right text-emerald-300">{formatMoney(period.incomeMinor, trend.currencyCode)}</td></tr>)}
                         </tbody>
                       </table>
                     </div></details>
@@ -973,7 +975,24 @@ export function App() {
 
           {transactions.length > 0 ? (
             <div className="mt-5">
-              <div className="relative overflow-x-auto rounded-2xl border border-neutral-800">
+              <div className="divide-y divide-neutral-800 border-y border-neutral-800 min-[1200px]:hidden" aria-label="Transaction list">
+                {transactions.map(transaction => <details key={transaction.id} className="group py-1">
+                  <summary className="cursor-pointer list-none px-1 py-3 focus-visible:outline focus-visible:outline-emerald-400 [&::-webkit-details-marker]:hidden">
+                    <span className="flex items-start justify-between gap-3">
+                      <span className="min-w-0 break-words text-sm font-medium">{transaction.description}</span>
+                      <span className={`shrink-0 whitespace-nowrap text-sm font-medium tabular-nums ${transaction.amountMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(transaction.amountMinor, transaction.currencyCode)}</span>
+                    </span>
+                    <span className="mt-1 block text-xs text-neutral-400">{formatTransactionDate(transaction.transactionDate)} · {transaction.accountName}</span>
+                    <span className="mt-1 flex items-center justify-between gap-3 text-xs text-neutral-500"><span>{transaction.recurringPayment ? "Recurring · " : ""}{titleCase(transaction.economicType)}{transaction.isExcludedFromCashFlow ? " · Excluded" : ""}{transaction.tags.length ? ` · ${transaction.tags.map(tag => tag.name).join(" · ")}` : ""}</span><span aria-hidden="true" className="shrink-0 transition-transform group-open:rotate-90">›</span></span>
+                  </summary>
+                  <div className="px-1 pb-4 text-sm">
+                    <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-xs"><dt className="text-neutral-500">Provider</dt><dd>{transaction.sourceName}</dd><dt className="text-neutral-500">Type</dt><dd>{titleCase(transaction.transactionType)}</dd></dl>
+                    {transactionDetails(transaction)}
+                    <Button variant="outline" size="sm" className="mt-3" disabled={savingKey === `cash-flow-${transaction.id}`} onClick={() => void setCashFlowExcluded(transaction, !transaction.isExcludedFromCashFlow)}>{transaction.isExcludedFromCashFlow ? "Include in cash flow" : "Exclude from cash flow"}</Button>
+                  </div>
+                </details>)}
+              </div>
+              <div className="relative hidden overflow-x-auto rounded-2xl border border-neutral-800 min-[1200px]:block">
                 <table className="w-full min-w-[760px] text-left text-sm">
                 <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500">
                   <tr>
@@ -990,7 +1009,7 @@ export function App() {
                   {transactions.map(transaction => (
                     <tr key={transaction.id} className="group bg-neutral-950/30">
                       <td className="whitespace-nowrap px-4 py-3 text-neutral-400">{formatTransactionDate(transaction.transactionDate)}</td>
-                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}{transaction.recurringPayment ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setRecurringSeed(null); setSelectedRecurringId(transaction.recurringPayment!.id); setPage("recurring"); }}>Tracked: {transaction.recurringPayment.name}</button> : transaction.economicType === "expense" && !transaction.isExcludedFromCashFlow ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setSelectedRecurringId(null); setRecurringSeed(transaction.id); setPage("recurring"); }}>Track as recurring payment</button> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></td>
+                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transactionDetails(transaction)}</td>
                       <td className="px-4 py-3 text-neutral-400">{transaction.accountName}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.transactionType)}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.economicType)}</td>

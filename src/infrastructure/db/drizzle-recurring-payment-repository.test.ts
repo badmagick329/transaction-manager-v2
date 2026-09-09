@@ -44,7 +44,7 @@ test("migration, persistence, exclusion changes, linking, and route validation",
   await repository.link(rows[0].id, saved.id);
   expect((await repository.snapshot()).links).toEqual([{ transactionId: rows[0].id, paymentId: saved.id }]);
   const newAccount = db.insert(accounts).values({ sourceId: source.id, name: "HSBC", kind: "bank_account", currencyCode: "GBP" }).returning().get();
-  const method = { paymentId: saved.id, accountId: newAccount.id, description: "STREAMING HSBC", effectiveDate: "2026-04-01" };
+  const method = { matchMode: "exact", anchorDate: null, frequency: null, amountMinor: null, paymentId: saved.id, accountId: newAccount.id, description: "STREAMING HSBC", effectiveDate: "2026-04-01" };
   const change = (body: unknown) => routes["/api/recurring-payments/method"].POST(new Request("http://localhost/api/recurring-payments/method", { method: "POST", body: JSON.stringify(body) }));
   expect((await change({ ...method, effectiveDate: "2026-02-30" })).status).toBe(400);
   expect((await change({ ...method, accountId: 999 })).status).toBe(400);
@@ -62,5 +62,14 @@ test("migration, persistence, exclusion changes, linking, and route validation",
   expect((await change({ ...method, previousEffectiveDate: method.effectiveDate, effectiveDate: "2026-03-31" })).status).toBe(200);
   expect((await repository.snapshot()).methods).toHaveLength(1);
   expect((await repository.snapshot()).methods[0].effectiveDate).toBe("2026-03-31");
+  const previewRequest = new Request("http://localhost/api/recurring-payments/method/preview", { method: "POST", body: JSON.stringify({ ...method, effectiveDate: "2026-03-31", previousEffectiveDate: "2026-03-31", description: "STREAMING", matchMode: "starts_with", anchorDate: "2026-04-01", amountMinor: 1299 }) });
+  const methodPreview = await routes["/api/recurring-payments/method/preview"].POST(previewRequest);
+  expect(methodPreview.status).toBe(200);
+  expect((await methodPreview.json()).rows.some(t => t.description === "STREAMING HSBC" && t.outcome === "Included")).toBe(true);
+  expect((await repository.snapshot()).methods[0].matchMode).toBe("exact");
+  expect((await change({ ...method, effectiveDate: "2026-03-31", description: "STREAMING", matchMode: "starts_with", anchorDate: "2026-04-01", amountMinor: 1299 })).status).toBe(200);
+  expect((await repository.snapshot()).methods[0]).toMatchObject({ matchMode: "starts_with", anchorDate: "2026-04-01", amountMinor: 1299 });
+  expect((await change({ ...method, matchMode: "contains" })).status).toBe(400);
+  expect((await change({ ...method, description: " " })).status).toBe(400);
   db.$client.close();
 });

@@ -30,7 +30,7 @@ export class DrizzleRecurringPaymentRepository implements RecurringPaymentReposi
       if (!result) throw new Error("Payment-method change not found. Reload and try again.");
       return;
     }
-    await this.db.insert(recurringPaymentMethods).values(values).onConflictDoUpdate({ target: [recurringPaymentMethods.paymentId, recurringPaymentMethods.effectiveDate], set: { accountId: values.accountId, description: values.description } });
+    await this.db.insert(recurringPaymentMethods).values(values).onConflictDoUpdate({ target: [recurringPaymentMethods.paymentId, recurringPaymentMethods.effectiveDate], set: values });
   }
   async link(transactionId: number, paymentId: number) {
     const snapshot = await this.snapshot();
@@ -46,7 +46,7 @@ export class DrizzleRecurringPaymentRepository implements RecurringPaymentReposi
     if (id !== undefined) {
       const existing = await this.db.select().from(recurringPayments).where(eq(recurringPayments.id, id)).get();
       if (!existing) throw new Error("Recurring payment not found.");
-      if (input.accountId !== existing.accountId || recurringDescription(input.description) !== recurringDescription(existing.description) || input.currencyCode !== existing.currencyCode) throw new Error("Use Change payment method to preserve payment history. The subscription currency cannot be changed.");
+      if (input.accountId !== existing.accountId || input.currencyCode !== existing.currencyCode || input.anchorDate !== existing.anchorDate || input.frequency !== existing.frequency || input.amountMinor !== existing.amountMinor) throw new Error("Use Change matching or billing to record a dated change without rewriting history. Currency cannot be changed.");
       const result = await this.db.update(recurringPayments).set(input).where(eq(recurringPayments.id, id)).returning().get();
       if (!result) throw new Error("Recurring payment not found.");
       return result;

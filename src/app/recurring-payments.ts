@@ -1,13 +1,14 @@
 export const frequencies = ["weekly", "monthly", "quarterly", "annual"] as const;
 export type Frequency = typeof frequencies[number];
+export type RecurringMatchMode = "exact" | "starts_with";
 export type RecurringPaymentInput = {
   name: string; kind: "subscription" | "bill" | "instalment";
-  accountId: number; currencyCode: string; description: string;
+  accountId: number; currencyCode: string; description: string; matchMode: RecurringMatchMode;
   amountMinor: number; frequency: Frequency; anchorDate: string;
   status: "active" | "paused" | "cancelled" | "dismissed";
 };
 export type RecurringPayment = RecurringPaymentInput & { id: number };
-export type PaymentMethodChange = { paymentId: number; accountId: number; description: string; effectiveDate: string; previousEffectiveDate?: string };
+export type PaymentMethodChange = { paymentId: number; accountId: number; description: string; matchMode: RecurringMatchMode; effectiveDate: string; previousEffectiveDate?: string; anchorDate: string | null; frequency: Frequency | null; amountMinor: number | null };
 export type RecurringTransaction = { id: number; accountId: number; currencyCode: string; description: string; amountMinor: number; transactionDate: string };
 export type RecurringSnapshot = { payments: RecurringPayment[]; methods: PaymentMethodChange[]; transactions: RecurringTransaction[]; coverage: Array<{ accountId: number; startDate: string; endDate: string }>; links: Array<{ transactionId: number; paymentId: number }> };
 export interface RecurringPaymentRepository {
@@ -48,29 +49,62 @@ function onSchedule(payment: RecurringPaymentInput, transaction: RecurringTransa
   return Math.abs(dateValue(transaction.transactionDate) - dateValue(scheduledDate(payment.anchorDate, payment.frequency, cycle))) <= (payment.frequency === "weekly" ? 1 : 4) * day;
 }
 function sameMerchant(payment: RecurringPaymentInput, transaction: RecurringTransaction) {
-  return payment.accountId === transaction.accountId && payment.currencyCode === transaction.currencyCode && recurringDescription(payment.description) === recurringDescription(transaction.description);
+  const description = recurringDescription(transaction.description), pattern = recurringDescription(payment.description);
+  return payment.accountId === transaction.accountId && payment.currencyCode === transaction.currencyCode && (payment.matchMode === "starts_with" ? description.startsWith(pattern) : description === pattern);
+}
+
+// Blank overrides preserve the preceding schedule, including across later provider changes.
+export function recurringMethodAt(payment: RecurringPayment, methods: PaymentMethodChange[], date: string) {
+  let resolved = { ...payment, effectiveDate: "0001-01-01" };
+  for (const method of methods.filter(m => m.paymentId === payment.id && m.effectiveDate <= date.slice(0, 10)).sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate))) {
+    resolved = { ...resolved, accountId: method.accountId, description: method.description, matchMode: method.matchMode, effectiveDate: method.effectiveDate,
+      anchorDate: method.anchorDate ?? resolved.anchorDate, frequency: method.frequency ?? resolved.frequency, amountMinor: method.amountMinor ?? resolved.amountMinor };
+  }
+  return resolved;
+}
+
+// Preview uses the real matcher, so conflicts and irregular charges stay visible instead of being silently accepted.
+export function previewRecurringChange(before: RecurringSnapshot, after: RecurringSnapshot, paymentId: number) {
+  const original = recurringOverview(before).payments.find(p => p.id === paymentId);
+  const overview = recurringOverview(after);
+  const payment = overview.payments.find(p => p.id === paymentId)!;
+  const included = new Set(payment.transactions.map(t => t.id));
+  const previouslyIncluded = new Set(original?.transactions.map(t => t.id));
+  return {
+    nextDate: payment.nextDate,
+    rows: after.transactions.filter(t => included.has(t.id) || previouslyIncluded.has(t.id) || sameMerchant(recurringMethodAt(payment, after.methods, t.transactionDate), t)).map(t => {
+      const other = overview.payments.find(p => p.id !== paymentId && p.status !== "dismissed" && p.transactions.some(item => item.id === t.id));
+      return { ...t, outcome: included.has(t.id) ? "Included" : previouslyIncluded.has(t.id) ? "Removed from this subscription" : other ? `Already tracked: ${other.name}` : !onSchedule(recurringMethodAt(payment, after.methods, t.transactionDate), t) ? "Outside billing schedule; attach manually if appropriate" : "Ambiguous; not attached" };
+    }).sort((a, b) => a.transactionDate.localeCompare(b.transactionDate) || a.id - b.id),
+  };
 }
 
 // Recompute evidence from eligible expenses so exclusions and reclassification take effect immediately.
 export function recurringOverview(snapshot: RecurringSnapshot, today = new Date().toISOString().slice(0, 10)) {
   const methodsFor = (payment: RecurringPayment) => snapshot.methods.filter(m => m.paymentId === payment.id).sort((a, b) => a.effectiveDate.localeCompare(b.effectiveDate));
-  const methodAt = (payment: RecurringPayment, date: string) => methodsFor(payment).filter(m => m.effectiveDate <= date.slice(0, 10)).at(-1) ?? payment;
+  const methodAt = (payment: RecurringPayment, date: string) => recurringMethodAt(payment, snapshot.methods, date);
   const merchantAt = (payment: RecurringPayment, transaction: RecurringTransaction) => sameMerchant({ ...payment, ...methodAt(payment, transaction.transactionDate) }, transaction);
   const sorted = [...snapshot.transactions].sort((a, b) => a.transactionDate.localeCompare(b.transactionDate) || a.id - b.id);
   const owners = new Map<number, number[]>();
   for (const transaction of sorted) {
     const explicit = snapshot.links.find(link => link.transactionId === transaction.id);
-    owners.set(transaction.id, explicit ? [explicit.paymentId] : snapshot.payments.filter(p => p.status !== "dismissed" && merchantAt(p, transaction) && onSchedule(p, transaction)).map(p => p.id));
+    owners.set(transaction.id, explicit ? [explicit.paymentId] : snapshot.payments.filter(p => p.status !== "dismissed" && merchantAt(p, transaction) && onSchedule(methodAt(p, transaction.transactionDate), transaction)).map(p => p.id));
   }
   const payments = snapshot.payments.map(payment => {
     const candidates = sorted.filter(t => owners.get(t.id)?.length === 1 && owners.get(t.id)![0] === payment.id);
     // Multiple charges in one billing window are ambiguous and need user review.
-    const counts = new Map<number, number>();
-    for (const t of candidates) { const cycle = cycleFor(payment.anchorDate, payment.frequency, t.transactionDate); counts.set(cycle, (counts.get(cycle) ?? 0) + 1); }
-    const transactions = candidates.filter(t => snapshot.links.some(link => link.transactionId === t.id && link.paymentId === payment.id) || counts.get(cycleFor(payment.anchorDate, payment.frequency, t.transactionDate)) === 1);
+    const billingKey = (t: RecurringTransaction) => { const m = methodAt(payment, t.transactionDate); return `${m.anchorDate}:${m.frequency}:${cycleFor(m.anchorDate, m.frequency, t.transactionDate)}`; };
+    const counts = new Map<string, number>();
+    for (const t of candidates.filter(t => onSchedule(methodAt(payment, t.transactionDate), t))) { const key = billingKey(t); counts.set(key, (counts.get(key) ?? 0) + 1); }
+    const transactions = candidates.filter(t => snapshot.links.some(link => link.transactionId === t.id && link.paymentId === payment.id) || counts.get(billingKey(t)) === 1);
     const latest = transactions.at(-1);
-    const cycle = latest ? cycleFor(payment.anchorDate, payment.frequency, latest.transactionDate) + 1 : 0;
-    const nextDate = scheduledDate(payment.anchorDate, payment.frequency, cycle);
+    const currentMethod = methodAt(payment, today);
+    const forecastMethod = methodAt(payment, latest && latest.transactionDate.slice(0, 10) > today ? latest.transactionDate : today);
+    // Attaching an irregular charge must not move the subscription's billing schedule.
+    const latestScheduled = transactions.filter(t => { const m = methodAt(payment, t.transactionDate); return m.anchorDate === forecastMethod.anchorDate && m.frequency === forecastMethod.frequency && onSchedule(m, t); }).at(-1);
+    let cycle = latestScheduled ? cycleFor(forecastMethod.anchorDate, forecastMethod.frequency, latestScheduled.transactionDate) + 1 : Math.max(0, cycleFor(forecastMethod.anchorDate, forecastMethod.frequency, forecastMethod.effectiveDate === "0001-01-01" ? forecastMethod.anchorDate : forecastMethod.effectiveDate));
+    let nextDate = scheduledDate(forecastMethod.anchorDate, forecastMethod.frequency, cycle);
+    if (!latestScheduled && nextDate < forecastMethod.effectiveDate) nextDate = scheduledDate(forecastMethod.anchorDate, forecastMethod.frequency, ++cycle);
     const startDate = new Date(dateValue(nextDate) - 4 * day).toISOString().slice(0, 10);
     const endDate = new Date(dateValue(nextDate) + 4 * day).toISOString().slice(0, 10);
     // A billing window spanning a switch needs evidence from each account for its portion.
@@ -80,10 +114,10 @@ export function recurringOverview(snapshot: RecurringSnapshot, today = new Date(
       const accountId = methodAt(payment, value).accountId;
       if (!snapshot.coverage.some(c => c.accountId === accountId && c.startDate <= value && c.endDate >= value)) covered = false;
     }
-    const expectedAmount = latest ? Math.abs(latest.amountMinor) : payment.amountMinor;
-    return { ...payment, methods: methodsFor(payment), currentMethod: methodAt(payment, today), transactions, nextDate: payment.status === "active" ? nextDate : null,
-      monthlyEquivalentMinor: Math.round(expectedAmount * ({ weekly: 52 / 12, monthly: 1, quarterly: 1 / 3, annual: 1 / 12 }[payment.frequency])),
-      priceChanged: !!latest && Math.abs(latest.amountMinor) !== payment.amountMinor,
+    const expectedAmount = latest && latest.transactionDate.slice(0, 10) >= currentMethod.effectiveDate ? Math.abs(latest.amountMinor) : currentMethod.amountMinor;
+    return { ...payment, methods: methodsFor(payment), currentMethod, transactions, nextDate: payment.status === "active" ? nextDate : null,
+      monthlyEquivalentMinor: Math.round(expectedAmount * ({ weekly: 52 / 12, monthly: 1, quarterly: 1 / 3, annual: 1 / 12 }[currentMethod.frequency])),
+      priceChanged: !!latest && Math.abs(latest.amountMinor) !== methodAt(payment, latest.transactionDate).amountMinor,
       needsReview: candidates.length !== transactions.length || sorted.some(t => owners.get(t.id)!.includes(payment.id) && owners.get(t.id)!.length > 1),
       paymentMissing: payment.status === "active" && endDate < today && covered,
       coverageUnknown: payment.status === "active" && endDate < today && !covered,
@@ -104,7 +138,7 @@ export function recurringOverview(snapshot: RecurringSnapshot, today = new Date(
       if (group.length < required) continue;
       const evidence = group.slice(-Math.max(required, 6));
       const first = evidence[0], latest = evidence.at(-1)!;
-      const draft: RecurringPaymentInput = { name: latest.description, description: latest.description, accountId: latest.accountId, currencyCode: latest.currencyCode, amountMinor: Math.abs(latest.amountMinor), frequency, anchorDate: first.transactionDate.slice(0, 10), kind: "subscription", status: "active" };
+      const draft: RecurringPaymentInput = { matchMode: "exact", name: latest.description, description: latest.description, accountId: latest.accountId, currencyCode: latest.currencyCode, amountMinor: Math.abs(latest.amountMinor), frequency, anchorDate: first.transactionDate.slice(0, 10), kind: "subscription", status: "active" };
       if (!evidence.every((t, index) => cycleFor(draft.anchorDate, frequency, t.transactionDate) === index && onSchedule(draft, t))) continue;
       const amounts = evidence.map(t => Math.abs(t.amountMinor));
       const variable = Math.max(...amounts) !== Math.min(...amounts);

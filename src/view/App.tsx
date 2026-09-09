@@ -1,3 +1,6 @@
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
+import { Button } from '../components/ui/button';
+import { Input } from '../components/ui/input';
 import { useEffect, useMemo, useState } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "../index.css";
@@ -176,6 +179,7 @@ const emptyTagRuleDraft: TagRuleDraft = { tagId: "", sourceId: "", description: 
 
 export function App() {
   const [initialPreferences] = useState(() => loadUiPreferences(browserPreferenceStorage()));
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [transactionSummary, setTransactionSummary] = useState<TransactionSummary[]>([]);
@@ -567,32 +571,23 @@ export function App() {
     setError(null);
   };
 
+  const advancedFilterCount = [transactionFilter !== "all", transactionFilters.sourceId, transactionFilters.accountId, transactionFilters.currencyCode, transactionFilters.transactionType, transactionFilters.minAmount, transactionFilters.maxAmount, ...transactionFilters.tagIds, transactionFilters.untagged, transactionFilters.hideTransfers, transactionFilters.hideTrading212InterestCashbackAndDividends, transactionCompleteDataOnly].filter(Boolean).length;
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100">
-      <div className="mx-auto w-full max-w-6xl px-6 py-10 sm:px-8">
-        <header className="border-b border-neutral-800 pb-6">
-          <p className="text-xs uppercase tracking-[0.28em] text-neutral-500">Transaction Manager</p>
-          <h1 className="mt-2 text-2xl font-semibold tracking-tight">Bank import workspace</h1>
-          <p className="mt-2 text-sm text-neutral-400">
-            Put completed parser JSON files into <code className="rounded bg-neutral-800 px-1.5 py-0.5">imports/incoming</code>.
-          </p>
-          <nav className="mt-5 flex flex-wrap gap-2" aria-label="Workspace pages">
-            {(["dashboard", "classification", "reconciliation", "tags", "recurring", "transactions"] as const).map(item => (
-              <button
-                key={item}
-                className={`rounded-lg px-3 py-1.5 text-sm font-medium transition ${page === item ? "bg-neutral-100 text-neutral-950" : "border border-neutral-700 text-neutral-300 hover:border-neutral-500 hover:bg-neutral-900"}`}
-                onClick={() => setPage(item)}
-              >
-                {item === "recurring" ? "Recurring payments" : titleCase(item)}
-              </button>
-            ))}
+      <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-8 md:pl-64">
+        <header className="mb-6 border-b border-neutral-800 pb-4 md:fixed md:inset-y-0 md:left-0 md:mb-0 md:w-56 md:border-b-0 md:border-r md:bg-neutral-950 md:p-5">
+          <h1 className="text-lg font-semibold tracking-tight">Transaction Manager</h1>
+          <nav className="mt-6 flex flex-wrap gap-1 md:flex-col" aria-label="Workspace pages">
+            {(["dashboard", "transactions", "recurring", "classification", "reconciliation", "tags"] as const).map(item => <div key={item}>
+              {item === "classification" && <p className="mb-2 mt-6 hidden px-3 text-xs text-neutral-500 md:block">Manage data</p>}
+              <Button variant={page === item ? "secondary" : "ghost"} className="w-full justify-start" aria-current={page === item ? "page" : undefined} onClick={() => { setPage(item); window.scrollTo({ top: 0 }); }}>{item === "recurring" ? "Recurring payments" : titleCase(item)}</Button>
+            </div>)}
           </nav>
         </header>
 
         {error ? <p className="mt-6 rounded-lg border border-red-900 bg-red-950/40 p-4 text-sm text-red-200">{error}</p> : null}
 
-        <section className="mt-8 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5">
-          <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Latest import</p>
+        {page === "dashboard" && <details className="mt-2 rounded-lg border border-neutral-800 px-4 py-3"><summary className="cursor-pointer text-sm text-neutral-400">Latest import · {latestImport ? titleCase(latestImport.status) : "No imports"}</summary>
           {loading ? <p className="mt-3 text-sm text-neutral-400">Loading import status…</p> : null}
           {!loading && !latestImport ? (
             <p className="mt-3 text-sm text-neutral-400">No files imported yet. Add a completed JSON file to the incoming folder.</p>
@@ -608,36 +603,35 @@ export function App() {
               {latestImport.errorMessage ? <p className="mt-3 text-sm text-red-300">{latestImport.errorMessage}</p> : null}
             </div>
           ) : null}
-        </section>
+        </details>}
 
         {page === "dashboard" ? (
           <>
-          <DataCoverageCard coverage={dataCoverage} savingAccountId={savingCoverageAccountId} onSave={(accountId, draft) => void saveCoverageSettings(accountId, draft)} />
+          <details className="mt-2 rounded-lg border border-neutral-800 px-4 py-3"><summary className="cursor-pointer text-sm text-neutral-400">Statement coverage & accounts</summary><DataCoverageCard coverage={dataCoverage} savingAccountId={savingCoverageAccountId} onSave={(accountId, draft) => void saveCoverageSettings(accountId, draft)} /></details>
           <section className="mt-8">
             <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-end">
               <div>
                 <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Cash flow</p>
-                <h2 className="mt-2 text-xl font-semibold">Monthly overview</h2>
+                <h2 className="mt-2 text-xl font-semibold">Cash flow overview</h2>
               </div>
               <label className="text-sm text-neutral-400">
                 Range
-                <select
-                  className="ml-3 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100"
-                  value={datePreset}
-                  onChange={event => {
-                    const preset = event.target.value as typeof datePreset;
+                <Select 
+                  
+                  value={String(datePreset) || "none"}
+                  onValueChange={selected => { const value = selected === "none" ? "" : selected; {
+                    const preset = value as typeof datePreset;
                     setDashboardCompleteDataOnly(false);
                     setDatePreset(preset);
                     if (preset !== "custom") setDateRange(presetDateRange(preset));
-                  }}
-                >
-                  <option value="since_2024">Since 2024</option>
-                  <option value="month">This month</option>
-                  <option value="last_30_days">Last 30 days</option>
-                  <option value="last_90_days">Last 90 days</option>
-                  <option value="year_to_date">Year to date</option>
-                  <option value="custom">Custom</option>
-                </select>
+                  } }}><SelectTrigger aria-label="Range" className="ml-3 rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-neutral-100"><SelectValue /></SelectTrigger><SelectContent>
+                  <SelectItem value="since_2024">Since 2024</SelectItem>
+                  <SelectItem value="month">This month</SelectItem>
+                  <SelectItem value="last_30_days">Last 30 days</SelectItem>
+                  <SelectItem value="last_90_days">Last 90 days</SelectItem>
+                  <SelectItem value="year_to_date">Year to date</SelectItem>
+                  <SelectItem value="custom">Custom</SelectItem>
+                </SelectContent></Select>
               </label>
             </div>
             <div className="mt-4 flex flex-wrap items-center gap-3 text-sm text-neutral-400">
@@ -769,15 +763,13 @@ export function App() {
                         onChange={event => setRuleDrafts(current => ({ ...current, [key]: { ...draft, description: event.target.value } }))}
                         aria-label="Rule match text"
                       />
-                      <select
-                        className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100"
-                        value={draft.matchMode}
+                      <Select 
+                        
+                        value={String(draft.matchMode) || "none"}
                         disabled={savingKey === key}
-                        onChange={event => setRuleDrafts(current => ({ ...current, [key]: { ...draft, matchMode: event.target.value as ClassificationMatchMode } }))}
-                        aria-label="Rule match mode"
-                      >
-                        {matchModeOptions.map(matchMode => <option key={matchMode} value={matchMode}>{titleCase(matchMode)}</option>)}
-                      </select>
+                        onValueChange={selected => { const value = selected === "none" ? "" : selected; setRuleDrafts(current => ({ ...current, [key]: { ...draft, matchMode: value as ClassificationMatchMode } })) }}><SelectTrigger className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100" aria-label="Rule match mode"><SelectValue /></SelectTrigger><SelectContent>
+                        {matchModeOptions.map(matchMode => <SelectItem key={matchMode} value={matchMode}>{titleCase(matchMode)}</SelectItem>)}
+                      </SelectContent></Select>
                       {economicTypeOptionsForDirection(group.direction).map(economicType => (
                         <button
                           key={economicType}
@@ -822,14 +814,13 @@ export function App() {
                       <td className="px-4 py-3 text-neutral-100">{titleCase(rule.matchMode)}: {rule.normalizedDescription}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(rule.direction)}</td>
                       <td className="px-4 py-3">
-                        <select
-                          className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"
-                          value={rule.economicType}
+                        <Select 
+                          
+                          value={String(rule.economicType) || "none"}
                           disabled={savingKey === `rule-${rule.id}`}
-                          onChange={event => void saveRule({ sourceId: rule.sourceId, description: rule.normalizedDescription, direction: rule.direction, matchMode: rule.matchMode, economicType: event.target.value as EconomicType }, `rule-${rule.id}`)}
-                        >
-                          {economicTypeOptionsForDirection(rule.direction).map(economicType => <option key={economicType} value={economicType}>{titleCase(economicType)}</option>)}
-                        </select>
+                          onValueChange={selected => { const value = selected === "none" ? "" : selected; void saveRule({ sourceId: rule.sourceId, description: rule.normalizedDescription, direction: rule.direction, matchMode: rule.matchMode, economicType: value as EconomicType }, `rule-${rule.id}`) }}><SelectTrigger className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent>
+                          {economicTypeOptionsForDirection(rule.direction).map(economicType => <SelectItem key={economicType} value={economicType}>{titleCase(economicType)}</SelectItem>)}
+                        </SelectContent></Select>
                       </td>
                       <td className="px-4 py-3 text-right"><button className="text-sm text-red-300 hover:text-red-200 disabled:opacity-50" disabled={savingKey === `delete-${rule.id}`} onClick={() => void deleteRule(rule)}>{savingKey === `delete-${rule.id}` ? "Deleting…" : "Delete"}</button></td>
                     </tr>
@@ -881,24 +872,24 @@ export function App() {
         <section className={page === "transactions" ? "mt-8" : "hidden"}>
           <div className="flex items-baseline justify-between">
             <div>
-              <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Transactions</p>
-              <h2 className="mt-2 text-xl font-semibold">Newest first</h2>
+              <h2 className="text-xl font-semibold">Transactions</h2><p className="mt-1 text-sm text-neutral-400">Search and explore your money in and out.</p>
             </div>
             {!loading ? <div className="flex items-center gap-3"><p className="text-sm text-neutral-500">{transactions.length}{hasMoreTransactions ? "+" : ""} loaded</p>{cashFlowExclusionCount > 0 ? <button className="text-sm text-neutral-400 hover:text-neutral-200" onClick={() => setShowingCashFlowExclusions(current => !current)}>{showingCashFlowExclusions ? "Show all" : `Exclusions (${cashFlowExclusionCount})`}</button> : null}</div> : null}
           </div>
 
           <div className="mt-4 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4">
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs text-neutral-400">Economic type<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilter} onChange={event => setTransactionFilter(event.target.value as "all" | EconomicType)}><option value="all">All economic types</option>{economicTypeOptions.map(economicType => <option key={economicType} value={economicType}>{titleCase(economicType)}</option>)}</select></label>
-            <label className="text-xs text-neutral-400">Provider<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.sourceId} onChange={event => setTransactionFilters(current => ({ ...current, sourceId: event.target.value, accountId: "" }))}><option value="">All providers</option>{sources.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label>
-            <label className="text-xs text-neutral-400">Account<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.accountId} onChange={event => setTransactionFilters(current => ({ ...current, accountId: event.target.value }))}><option value="">All accounts</option>{accounts.filter(account => !transactionFilters.sourceId || String(account.sourceId) === transactionFilters.sourceId).map(account => <option key={account.id} value={account.id}>{account.name} ({account.currencyCode})</option>)}</select></label>
-            <label className="text-xs text-neutral-400">Currency<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.currencyCode} onChange={event => setTransactionFilters(current => ({ ...current, currencyCode: event.target.value }))}><option value="">All currencies</option>{currencies.map(currency => <option key={currency} value={currency}>{currency}</option>)}</select></label>
-            <label className="text-xs text-neutral-400">Transaction type<select className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.transactionType} onChange={event => setTransactionFilters(current => ({ ...current, transactionType: event.target.value }))}><option value="">All types</option><option value="purchase">Purchase</option><option value="direct_debit">Direct debit</option><option value="transfer">Transfer</option><option value="funding">Funding</option><option value="withdrawal">Withdrawal</option><option value="card_payment">Card payment</option><option value="refund">Refund</option><option value="fee">Fee</option><option value="cashback">Cashback</option><option value="interest">Interest</option><option value="dividend">Dividend</option><option value="adjustment">Adjustment</option><option value="unclassified">Unclassified</option></select></label>
-            <label className="text-xs text-neutral-400">Description contains<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.description} onChange={event => setTransactionFilters(current => ({ ...current, description: event.target.value }))} placeholder="e.g. Spotify" /></label>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><label className="text-xs text-neutral-400">Search<Input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.description} onChange={event => setTransactionFilters(current => ({ ...current, description: event.target.value }))} placeholder="Search transactions…" /></label><label className="text-xs text-neutral-400">From<DatePicker value={transactionFilters.startDate} onChange={value => { setTransactionCompleteDataOnly(false); setTransactionFilters(current => ({ ...current, startDate: value })); }} placeholder="Select start date" /></label><label className="text-xs text-neutral-400">To<DatePicker value={transactionFilters.endDate} onChange={value => setTransactionFilters(current => ({ ...current, endDate: value }))} placeholder="Select end date" /></label><Button variant="outline" className="self-end" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)}>Filters{advancedFilterCount ? ` (${advancedFilterCount})` : ""}</Button></div>
+            <div hidden={!filtersOpen} className="mt-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <label className="text-xs text-neutral-400">Economic type<Select   value={String(transactionFilter) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilter(value as "all" | EconomicType) }}><SelectTrigger aria-label="Economic type" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All economic types</SelectItem>{economicTypeOptions.map(economicType => <SelectItem key={economicType} value={economicType}>{titleCase(economicType)}</SelectItem>)}</SelectContent></Select></label>
+            <label className="text-xs text-neutral-400">Provider<Select   value={String(transactionFilters.sourceId) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilters(current => ({ ...current, sourceId: value, accountId: "" })) }}><SelectTrigger aria-label="Provider" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">All providers</SelectItem>{sources.map(([id, name]) => <SelectItem key={id} value={String(id)}>{name}</SelectItem>)}</SelectContent></Select></label>
+            <label className="text-xs text-neutral-400">Account<Select   value={String(transactionFilters.accountId) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilters(current => ({ ...current, accountId: value })) }}><SelectTrigger aria-label="Account" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">All accounts</SelectItem>{accounts.filter(account => !transactionFilters.sourceId || String(account.sourceId) === transactionFilters.sourceId).map(account => <SelectItem key={account.id} value={String(account.id)}>{account.name} ({account.currencyCode})</SelectItem>)}</SelectContent></Select></label>
+            <label className="text-xs text-neutral-400">Currency<Select   value={String(transactionFilters.currencyCode) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilters(current => ({ ...current, currencyCode: value })) }}><SelectTrigger aria-label="Currency" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">All currencies</SelectItem>{currencies.map(currency => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}</SelectContent></Select></label>
+            <label className="text-xs text-neutral-400">Transaction type<Select   value={String(transactionFilters.transactionType) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilters(current => ({ ...current, transactionType: value })) }}><SelectTrigger aria-label="Transaction type" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">All types</SelectItem><SelectItem value="purchase">Purchase</SelectItem><SelectItem value="direct_debit">Direct debit</SelectItem><SelectItem value="transfer">Transfer</SelectItem><SelectItem value="funding">Funding</SelectItem><SelectItem value="withdrawal">Withdrawal</SelectItem><SelectItem value="card_payment">Card payment</SelectItem><SelectItem value="refund">Refund</SelectItem><SelectItem value="fee">Fee</SelectItem><SelectItem value="cashback">Cashback</SelectItem><SelectItem value="interest">Interest</SelectItem><SelectItem value="dividend">Dividend</SelectItem><SelectItem value="adjustment">Adjustment</SelectItem><SelectItem value="unclassified">Unclassified</SelectItem></SelectContent></Select></label>
+            
             <label className="text-xs text-neutral-400">Amount from<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="text" inputMode="decimal" value={transactionFilters.minAmount} onChange={event => { if (isAmountInput(event.target.value)) setTransactionFilters(current => ({ ...current, minAmount: event.target.value })); }} placeholder="e.g. -200.00" /></label>
             <label className="text-xs text-neutral-400">Amount to<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="text" inputMode="decimal" value={transactionFilters.maxAmount} onChange={event => { if (isAmountInput(event.target.value)) setTransactionFilters(current => ({ ...current, maxAmount: event.target.value })); }} placeholder="e.g. 200.00" /></label>
-            <label className="text-xs text-neutral-400">From<DatePicker value={transactionFilters.startDate} onChange={value => { setTransactionCompleteDataOnly(false); setTransactionFilters(current => ({ ...current, startDate: value })); }} placeholder="Select start date" /></label>
-            <label className="text-xs text-neutral-400">To<DatePicker value={transactionFilters.endDate} onChange={value => setTransactionFilters(current => ({ ...current, endDate: value }))} placeholder="Select end date" /></label>
+            
+            
             <fieldset className="text-xs text-neutral-400 sm:col-span-2"><legend>Tags · match any</legend><div className="mt-1 flex min-h-9 max-h-28 flex-wrap items-center gap-2 overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5">{tags.map(tag => <label key={tag.id} className="flex items-center gap-1.5 text-sm text-neutral-300"><Checkbox checked={transactionFilters.tagIds.includes(String(tag.id))} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, tagIds: checked === true ? [...current.tagIds, String(tag.id)] : current.tagIds.filter(tagId => tagId !== String(tag.id)) }))} />{tag.name}</label>)}<label className="flex items-center gap-1.5 text-sm text-neutral-300"><Checkbox checked={transactionFilters.untagged} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, untagged: checked === true }))} />Untagged</label>{tags.length === 0 ? <span className="text-sm text-neutral-500">No tags created</span> : null}</div></fieldset>
             </div>
             <div className="mt-4 flex flex-col gap-3 border-t border-neutral-800 pt-4 sm:flex-row sm:items-center sm:justify-between">
@@ -909,9 +900,10 @@ export function App() {
               </div>
               <button className="w-fit rounded-lg border border-neutral-700 px-3 py-1.5 text-sm text-neutral-200 hover:border-neutral-500 hover:bg-neutral-800" onClick={() => { setTransactionCompleteDataOnly(false); setTransactionFilter("all"); setTransactionFilters(emptyTransactionFilters); }}>Clear filters</button>
             </div>
+            </div>
           </div>
           {transactionCompleteDataOnly && transactionCoverageInterval ? <p className="mt-2 text-xs text-emerald-300">Using verified data through {transactionEffectiveEndDate}.</p> : null}
-          <p className="mt-2 text-xs text-neutral-500">Amount filters use signed values: negative for money out and positive for money in.</p>
+          {filtersOpen && <p className="mt-2 text-xs text-neutral-500">Amount filters: negative for money out, positive for money in.</p>}
 
           {transactionSummary.length > 0 ? <div className="mt-4 flex flex-wrap gap-3">{transactionSummary.map(summary => <div key={summary.currencyCode} className="rounded-xl border border-neutral-800 bg-neutral-900/60 px-4 py-3 text-sm"><p className="text-xs uppercase tracking-wide text-neutral-500">{showingCashFlowExclusions ? "Excluded total" : "Filtered total"} · {summary.transactionCount} transactions · {summary.currencyCode}</p><p className="mt-1 text-neutral-200">Income <span className="font-medium text-emerald-300">{formatMoney(summary.incomeMinor, summary.currencyCode)}</span> · Expenses <span className="font-medium text-red-300">{formatMoney(Math.abs(summary.expenseMinor), summary.currencyCode)}</span> · Net cash flow <span className={summary.netCashFlowMinor < 0 ? "font-medium text-red-300" : "font-medium text-emerald-300"}>{formatMoney(summary.netCashFlowMinor, summary.currencyCode)}</span></p><p className="mt-1 text-xs text-neutral-500">Transfers: {formatMoney(summary.transferInflowMinor, summary.currencyCode)} in · {formatMoney(Math.abs(summary.transferOutflowMinor), summary.currencyCode)} out</p>{showingCashFlowExclusions ? <p className="mt-1 text-xs text-neutral-500">Not included in dashboard cash flow.</p> : null}</div>)}</div> : null}
 

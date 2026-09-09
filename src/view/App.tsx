@@ -571,7 +571,21 @@ export function App() {
     setError(null);
   };
 
-  const advancedFilterCount = [transactionFilter !== "all", transactionFilters.sourceId, transactionFilters.accountId, transactionFilters.currencyCode, transactionFilters.transactionType, transactionFilters.minAmount, transactionFilters.maxAmount, ...transactionFilters.tagIds, transactionFilters.untagged, transactionFilters.hideTransfers, transactionFilters.hideTrading212InterestCashbackAndDividends, transactionCompleteDataOnly].filter(Boolean).length;
+  const activeFilterLabels = [
+    transactionFilter !== "all" && titleCase(transactionFilter),
+    transactionFilters.sourceId && sources.find(([id]) => String(id) === transactionFilters.sourceId)?.[1],
+    transactionFilters.accountId && accounts.find(account => String(account.id) === transactionFilters.accountId)?.name,
+    transactionFilters.currencyCode,
+    transactionFilters.transactionType && titleCase(transactionFilters.transactionType),
+    transactionFilters.minAmount && `Amount ≥ ${transactionFilters.minAmount}`,
+    transactionFilters.maxAmount && `Amount ≤ ${transactionFilters.maxAmount}`,
+    ...transactionFilters.tagIds.map(id => tags.find(tag => String(tag.id) === id)?.name),
+    transactionFilters.untagged && "Untagged",
+    transactionFilters.hideTransfers && "Transfers hidden",
+    transactionFilters.hideTrading212InterestCashbackAndDividends && "Trading 212 rewards hidden",
+    transactionCompleteDataOnly && "Verified data only",
+  ].filter(Boolean);
+  const advancedFilterCount = activeFilterLabels.length;
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100">
       <div className="mx-auto w-full max-w-[1500px] px-4 py-6 sm:px-8 md:pl-64">
@@ -616,10 +630,10 @@ export function App() {
               </div>
               <label className="text-sm text-neutral-400">
                 Range
-                <Select 
-                  
-                  value={String(datePreset) || "none"}
-                  onValueChange={selected => { const value = selected === "none" ? "" : selected; {
+                <Select
+
+                  value={datePreset}
+                  onValueChange={value => { {
                     const preset = value as typeof datePreset;
                     setDashboardCompleteDataOnly(false);
                     setDatePreset(preset);
@@ -645,15 +659,16 @@ export function App() {
             {cashFlowSummary?.map(summary => (
               <div key={summary.currencyCode} className="mt-5">
                 <p className="text-sm font-medium text-neutral-300">{summary.currencyCode}</p>
-                <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="mt-3 grid gap-4 sm:grid-cols-3">
                   <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Income</p><p className="mt-2 text-2xl font-semibold text-emerald-300">{formatMoney(summary.incomeMinor, summary.currencyCode)}</p></div>
                   <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Expenses</p><p className="mt-2 text-2xl font-semibold text-red-300">{formatMoney(Math.abs(summary.expenseMinor), summary.currencyCode)}</p></div>
                   <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Net cash flow</p><p className={`mt-2 text-2xl font-semibold ${summary.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(summary.netCashFlowMinor, summary.currencyCode)}</p></div>
-                  <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Unclassified</p><p className="mt-2 text-2xl font-semibold">{summary.unclassifiedTransactionCount}</p><button className="mt-2 text-sm text-neutral-400 hover:text-neutral-200" onClick={() => setPage("classification")}>Review classifications</button></div>
+
                 </div>
+                {summary.unclassifiedTransactionCount > 0 && <Button variant="outline" className="mt-3" onClick={() => setPage("classification")}>Review {summary.unclassifiedTransactionCount} unclassified transactions</Button>}
                 <p className="mt-4 text-sm text-neutral-500">Transfer activity: {formatMoney(summary.transferInflowMinor, summary.currencyCode)} in · {formatMoney(Math.abs(summary.transferOutflowMinor), summary.currencyCode)} out · {formatMoney(summary.transferInflowMinor + summary.transferOutflowMinor, summary.currencyCode)} net</p>
                 {cashFlowExclusionCount > 0 ? <button className="mt-2 text-sm text-neutral-500 hover:text-neutral-300" onClick={() => { setShowingCashFlowExclusions(true); setPage("transactions"); }}>Excluding {cashFlowExclusionCount} marked transaction{cashFlowExclusionCount === 1 ? "" : "s"} from cash flow</button> : null}
-                <div className="mt-4 overflow-x-auto rounded-2xl border border-neutral-800">
+                <details className="mt-4"><summary className="cursor-pointer text-sm text-neutral-400">Breakdown by provider</summary><div className="mt-3 overflow-x-auto rounded-lg border border-neutral-800">
                   <table className="w-full min-w-[680px] text-left text-sm">
                     <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500"><tr><th className="px-4 py-3 font-medium">Source</th><th className="px-4 py-3 text-right font-medium">Income</th><th className="px-4 py-3 text-right font-medium">Expenses</th><th className="px-4 py-3 text-right font-medium">Net flow</th><th className="px-4 py-3 text-right font-medium">Transfer activity</th></tr></thead>
                     <tbody className="divide-y divide-neutral-800">
@@ -669,7 +684,7 @@ export function App() {
                     </tbody>
                   </table>
                 </div>
-                <p className="mt-2 text-xs text-neutral-600">Transfer activity includes internal account movements and is not reconciled across accounts.</p>
+                <p className="mt-2 text-xs text-neutral-600">Transfer activity includes internal account movements and is not reconciled across accounts.</p></details>
               </div>
             ))}
 
@@ -707,14 +722,14 @@ export function App() {
                         </ComposedChart>
                       </ResponsiveContainer>
                     </div>
-                    <div className="mt-4 overflow-x-auto rounded-2xl border border-neutral-800">
+                    <details className="mt-4"><summary className="cursor-pointer text-sm text-neutral-400">View period totals</summary><div className="mt-3 overflow-x-auto rounded-lg border border-neutral-800">
                       <table className="w-full min-w-[560px] text-left text-sm">
                         <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500"><tr><th className="px-4 py-3 font-medium">{trendGranularity === "month" ? "Month" : "Year"}</th><th className="px-4 py-3 text-right font-medium">Income</th><th className="px-4 py-3 text-right font-medium">Expenses</th><th className="px-4 py-3 text-right font-medium">Net cash flow</th></tr></thead>
                         <tbody className="divide-y divide-neutral-800">
                           {trend.periods.map(period => <tr key={period.period} className="bg-neutral-950/30"><td className="px-4 py-3 text-neutral-100">{period.label}</td><td className="px-4 py-3 text-right text-emerald-300">{formatMoney(period.incomeMinor, trend.currencyCode)}</td><td className="px-4 py-3 text-right text-red-300">{formatMoney(Math.abs(period.expenseMinor), trend.currencyCode)}</td><td className={`px-4 py-3 text-right ${period.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(period.netCashFlowMinor, trend.currencyCode)}</td></tr>)}
                         </tbody>
                       </table>
-                    </div>
+                    </div></details>
                   </div>
                 );
               })}
@@ -763,11 +778,11 @@ export function App() {
                         onChange={event => setRuleDrafts(current => ({ ...current, [key]: { ...draft, description: event.target.value } }))}
                         aria-label="Rule match text"
                       />
-                      <Select 
-                        
-                        value={String(draft.matchMode) || "none"}
+                      <Select
+
+                        value={draft.matchMode}
                         disabled={savingKey === key}
-                        onValueChange={selected => { const value = selected === "none" ? "" : selected; setRuleDrafts(current => ({ ...current, [key]: { ...draft, matchMode: value as ClassificationMatchMode } })) }}><SelectTrigger className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100" aria-label="Rule match mode"><SelectValue /></SelectTrigger><SelectContent>
+                        onValueChange={value => { setRuleDrafts(current => ({ ...current, [key]: { ...draft, matchMode: value as ClassificationMatchMode } })) }}><SelectTrigger className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1.5 text-sm text-neutral-100" aria-label="Rule match mode"><SelectValue /></SelectTrigger><SelectContent>
                         {matchModeOptions.map(matchMode => <SelectItem key={matchMode} value={matchMode}>{titleCase(matchMode)}</SelectItem>)}
                       </SelectContent></Select>
                       {economicTypeOptionsForDirection(group.direction).map(economicType => (
@@ -814,11 +829,11 @@ export function App() {
                       <td className="px-4 py-3 text-neutral-100">{titleCase(rule.matchMode)}: {rule.normalizedDescription}</td>
                       <td className="px-4 py-3 text-neutral-400">{titleCase(rule.direction)}</td>
                       <td className="px-4 py-3">
-                        <Select 
-                          
-                          value={String(rule.economicType) || "none"}
+                        <Select
+
+                          value={rule.economicType}
                           disabled={savingKey === `rule-${rule.id}`}
-                          onValueChange={selected => { const value = selected === "none" ? "" : selected; void saveRule({ sourceId: rule.sourceId, description: rule.normalizedDescription, direction: rule.direction, matchMode: rule.matchMode, economicType: value as EconomicType }, `rule-${rule.id}`) }}><SelectTrigger className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent>
+                          onValueChange={value => { void saveRule({ sourceId: rule.sourceId, description: rule.normalizedDescription, direction: rule.direction, matchMode: rule.matchMode, economicType: value as EconomicType }, `rule-${rule.id}`) }}><SelectTrigger className="rounded-lg border border-neutral-700 bg-neutral-900 px-2 py-1 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent>
                           {economicTypeOptionsForDirection(rule.direction).map(economicType => <SelectItem key={economicType} value={economicType}>{titleCase(economicType)}</SelectItem>)}
                         </SelectContent></Select>
                       </td>
@@ -880,16 +895,16 @@ export function App() {
           <div className="mt-4 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4">
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4"><label className="text-xs text-neutral-400">Search<Input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" value={transactionFilters.description} onChange={event => setTransactionFilters(current => ({ ...current, description: event.target.value }))} placeholder="Search transactions…" /></label><label className="text-xs text-neutral-400">From<DatePicker value={transactionFilters.startDate} onChange={value => { setTransactionCompleteDataOnly(false); setTransactionFilters(current => ({ ...current, startDate: value })); }} placeholder="Select start date" /></label><label className="text-xs text-neutral-400">To<DatePicker value={transactionFilters.endDate} onChange={value => setTransactionFilters(current => ({ ...current, endDate: value }))} placeholder="Select end date" /></label><Button variant="outline" className="self-end" aria-expanded={filtersOpen} onClick={() => setFiltersOpen(!filtersOpen)}>Filters{advancedFilterCount ? ` (${advancedFilterCount})` : ""}</Button></div>
             <div hidden={!filtersOpen} className="mt-4"><div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <label className="text-xs text-neutral-400">Economic type<Select   value={String(transactionFilter) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilter(value as "all" | EconomicType) }}><SelectTrigger aria-label="Economic type" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All economic types</SelectItem>{economicTypeOptions.map(economicType => <SelectItem key={economicType} value={economicType}>{titleCase(economicType)}</SelectItem>)}</SelectContent></Select></label>
+            <label className="text-xs text-neutral-400">Economic type<Select   value={transactionFilter} onValueChange={value => { setTransactionFilter(value as "all" | EconomicType) }}><SelectTrigger aria-label="Economic type" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="all">All economic types</SelectItem>{economicTypeOptions.map(economicType => <SelectItem key={economicType} value={economicType}>{titleCase(economicType)}</SelectItem>)}</SelectContent></Select></label>
             <label className="text-xs text-neutral-400">Provider<Select   value={String(transactionFilters.sourceId) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilters(current => ({ ...current, sourceId: value, accountId: "" })) }}><SelectTrigger aria-label="Provider" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">All providers</SelectItem>{sources.map(([id, name]) => <SelectItem key={id} value={String(id)}>{name}</SelectItem>)}</SelectContent></Select></label>
             <label className="text-xs text-neutral-400">Account<Select   value={String(transactionFilters.accountId) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilters(current => ({ ...current, accountId: value })) }}><SelectTrigger aria-label="Account" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">All accounts</SelectItem>{accounts.filter(account => !transactionFilters.sourceId || String(account.sourceId) === transactionFilters.sourceId).map(account => <SelectItem key={account.id} value={String(account.id)}>{account.name} ({account.currencyCode})</SelectItem>)}</SelectContent></Select></label>
             <label className="text-xs text-neutral-400">Currency<Select   value={String(transactionFilters.currencyCode) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilters(current => ({ ...current, currencyCode: value })) }}><SelectTrigger aria-label="Currency" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">All currencies</SelectItem>{currencies.map(currency => <SelectItem key={currency} value={currency}>{currency}</SelectItem>)}</SelectContent></Select></label>
             <label className="text-xs text-neutral-400">Transaction type<Select   value={String(transactionFilters.transactionType) || "none"} onValueChange={selected => { const value = selected === "none" ? "" : selected; setTransactionFilters(current => ({ ...current, transactionType: value })) }}><SelectTrigger aria-label="Transaction type" className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="none">All types</SelectItem><SelectItem value="purchase">Purchase</SelectItem><SelectItem value="direct_debit">Direct debit</SelectItem><SelectItem value="transfer">Transfer</SelectItem><SelectItem value="funding">Funding</SelectItem><SelectItem value="withdrawal">Withdrawal</SelectItem><SelectItem value="card_payment">Card payment</SelectItem><SelectItem value="refund">Refund</SelectItem><SelectItem value="fee">Fee</SelectItem><SelectItem value="cashback">Cashback</SelectItem><SelectItem value="interest">Interest</SelectItem><SelectItem value="dividend">Dividend</SelectItem><SelectItem value="adjustment">Adjustment</SelectItem><SelectItem value="unclassified">Unclassified</SelectItem></SelectContent></Select></label>
-            
+
             <label className="text-xs text-neutral-400">Amount from<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="text" inputMode="decimal" value={transactionFilters.minAmount} onChange={event => { if (isAmountInput(event.target.value)) setTransactionFilters(current => ({ ...current, minAmount: event.target.value })); }} placeholder="e.g. -200.00" /></label>
             <label className="text-xs text-neutral-400">Amount to<input className="mt-1 w-full rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5 text-sm text-neutral-100" type="text" inputMode="decimal" value={transactionFilters.maxAmount} onChange={event => { if (isAmountInput(event.target.value)) setTransactionFilters(current => ({ ...current, maxAmount: event.target.value })); }} placeholder="e.g. 200.00" /></label>
-            
-            
+
+
             <fieldset className="text-xs text-neutral-400 sm:col-span-2"><legend>Tags · match any</legend><div className="mt-1 flex min-h-9 max-h-28 flex-wrap items-center gap-2 overflow-y-auto rounded-lg border border-neutral-700 bg-neutral-900 px-3 py-1.5">{tags.map(tag => <label key={tag.id} className="flex items-center gap-1.5 text-sm text-neutral-300"><Checkbox checked={transactionFilters.tagIds.includes(String(tag.id))} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, tagIds: checked === true ? [...current.tagIds, String(tag.id)] : current.tagIds.filter(tagId => tagId !== String(tag.id)) }))} />{tag.name}</label>)}<label className="flex items-center gap-1.5 text-sm text-neutral-300"><Checkbox checked={transactionFilters.untagged} onCheckedChange={checked => setTransactionFilters(current => ({ ...current, untagged: checked === true }))} />Untagged</label>{tags.length === 0 ? <span className="text-sm text-neutral-500">No tags created</span> : null}</div></fieldset>
             </div>
             <div className="mt-4 flex flex-col gap-3 border-t border-neutral-800 pt-4 sm:flex-row sm:items-center sm:justify-between">
@@ -902,6 +917,7 @@ export function App() {
             </div>
             </div>
           </div>
+          {activeFilterLabels.length > 0 && !filtersOpen && <div className="mt-3 flex flex-wrap items-center gap-2" aria-label="Active filters">{activeFilterLabels.map((label, index) => <span key={index} className="rounded-md bg-neutral-800 px-2 py-1 text-xs text-neutral-300">{label}</span>)}<Button variant="ghost" size="sm" onClick={() => { setTransactionCompleteDataOnly(false); setTransactionFilter("all"); setTransactionFilters(emptyTransactionFilters); }}>Clear filters</Button></div>}
           {transactionCompleteDataOnly && transactionCoverageInterval ? <p className="mt-2 text-xs text-emerald-300">Using verified data through {transactionEffectiveEndDate}.</p> : null}
           {filtersOpen && <p className="mt-2 text-xs text-neutral-500">Amount filters: negative for money out, positive for money in.</p>}
 
@@ -915,7 +931,7 @@ export function App() {
 
           {transactions.length > 0 ? (
             <div className="mt-5">
-              <div className="overflow-x-auto rounded-2xl border border-neutral-800">
+              <div className="relative overflow-x-auto rounded-2xl border border-neutral-800">
                 <table className="w-full min-w-[760px] text-left text-sm">
                 <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500">
                   <tr>

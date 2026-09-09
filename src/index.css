@@ -14,6 +14,14 @@
   min-height: 100vh;
 }
 
+.dark { color-scheme: dark; }
+
+button, summary { touch-action: manipulation; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+}
+
 @media (prefers-reduced-motion) {
   *,
   ::before,

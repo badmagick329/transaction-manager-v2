@@ -96,7 +96,7 @@ function booleanValue(value: unknown, fallback = false) {
   return typeof value === "boolean" ? value : fallback;
 }
 
-function validDate(value: unknown) {
+export function validDate(value: unknown) {
   if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(`${value}T00:00:00Z`);
   return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
@@ -109,57 +109,63 @@ export function loadUiPreferences(storage: PreferenceStorage | null, now = new D
     const raw = storage.getItem(uiPreferencesStorageKey);
     if (!raw) return defaults;
     const stored: unknown = JSON.parse(raw);
-    if (!isRecord(stored)) return defaults;
-    const dashboard = isRecord(stored.dashboard) ? stored.dashboard : {};
-    const transactions = isRecord(stored.transactions) ? stored.transactions : {};
-    const filters = isRecord(transactions.filters) ? transactions.filters : {};
-    let datePreset = datePresets.includes(dashboard.datePreset as DashboardDatePreset)
-      ? dashboard.datePreset as DashboardDatePreset
-      : defaults.dashboard.datePreset;
-    const storedRange = isRecord(dashboard.dateRange) ? dashboard.dateRange : {};
-    const hasValidCustomRange = validDate(storedRange.startDate)
-      && validDate(storedRange.endDate)
-      && String(storedRange.startDate) <= String(storedRange.endDate);
-    if (datePreset === "custom" && !hasValidCustomRange) datePreset = defaults.dashboard.datePreset;
-    const dateRange = datePreset === "custom"
-      ? { startDate: String(storedRange.startDate), endDate: String(storedRange.endDate) }
-      : presetDateRange(datePreset, now);
-    const economicType = economicTypes.includes(transactions.economicType as "all" | EconomicType)
-      ? transactions.economicType as "all" | EconomicType
-      : defaults.transactions.economicType;
-
-    return {
-      page: pages.includes(stored.page as WorkspacePage) ? stored.page as WorkspacePage : defaults.page,
-      dashboard: {
-        datePreset,
-        dateRange,
-        completeDataOnly: booleanValue(dashboard.completeDataOnly),
-        trendGranularity: dashboard.trendGranularity === "year" ? "year" : "month",
-      },
-      transactions: {
-        economicType,
-        completeDataOnly: booleanValue(transactions.completeDataOnly),
-        showingCashFlowExclusions: booleanValue(transactions.showingCashFlowExclusions),
-        filters: {
-          sourceId: /^\d+$/.test(stringValue(filters.sourceId)) ? String(filters.sourceId) : "",
-          accountId: /^\d+$/.test(stringValue(filters.accountId)) ? String(filters.accountId) : "",
-          currencyCode: stringValue(filters.currencyCode),
-          transactionType: transactionTypes.includes(stringValue(filters.transactionType)) ? String(filters.transactionType) : "",
-          description: stringValue(filters.description),
-          minAmount: /^-?\d*(?:\.\d{0,2})?$/.test(stringValue(filters.minAmount)) ? String(filters.minAmount) : "",
-          maxAmount: /^-?\d*(?:\.\d{0,2})?$/.test(stringValue(filters.maxAmount)) ? String(filters.maxAmount) : "",
-          startDate: validDate(filters.startDate) ? String(filters.startDate) : "",
-          endDate: validDate(filters.endDate) ? String(filters.endDate) : "",
-          hideTrading212InterestCashbackAndDividends: booleanValue(filters.hideTrading212InterestCashbackAndDividends),
-          hideTransfers: booleanValue(filters.hideTransfers),
-          tagIds: Array.isArray(filters.tagIds) ? filters.tagIds.filter((value): value is string => typeof value === "string" && /^\d+$/.test(value)) : [],
-          untagged: booleanValue(filters.untagged),
-        },
-      },
-    };
+    return parseUiPreferences(stored, now);
   } catch {
     return defaults;
   }
+}
+
+/** Both local storage and shared URLs are untrusted entry points to the same view state. */
+export function parseUiPreferences(stored: unknown, now = new Date()): UiPreferences {
+  const defaults = defaultUiPreferences(now);
+  if (!isRecord(stored)) return defaults;
+  const dashboard = isRecord(stored.dashboard) ? stored.dashboard : {};
+  const transactions = isRecord(stored.transactions) ? stored.transactions : {};
+  const filters = isRecord(transactions.filters) ? transactions.filters : {};
+  let datePreset = datePresets.includes(dashboard.datePreset as DashboardDatePreset)
+    ? dashboard.datePreset as DashboardDatePreset
+    : defaults.dashboard.datePreset;
+  const storedRange = isRecord(dashboard.dateRange) ? dashboard.dateRange : {};
+  const hasValidCustomRange = validDate(storedRange.startDate)
+    && validDate(storedRange.endDate)
+    && String(storedRange.startDate) <= String(storedRange.endDate);
+  if (datePreset === "custom" && !hasValidCustomRange) datePreset = defaults.dashboard.datePreset;
+  const dateRange = datePreset === "custom"
+    ? { startDate: String(storedRange.startDate), endDate: String(storedRange.endDate) }
+    : presetDateRange(datePreset, now);
+  const economicType = economicTypes.includes(transactions.economicType as "all" | EconomicType)
+    ? transactions.economicType as "all" | EconomicType
+    : defaults.transactions.economicType;
+
+  return {
+    page: pages.includes(stored.page as WorkspacePage) ? stored.page as WorkspacePage : defaults.page,
+    dashboard: {
+      datePreset,
+      dateRange,
+      completeDataOnly: booleanValue(dashboard.completeDataOnly),
+      trendGranularity: dashboard.trendGranularity === "year" ? "year" : "month",
+    },
+    transactions: {
+      economicType,
+      completeDataOnly: booleanValue(transactions.completeDataOnly),
+      showingCashFlowExclusions: booleanValue(transactions.showingCashFlowExclusions),
+      filters: {
+        sourceId: /^\d+$/.test(stringValue(filters.sourceId)) ? String(filters.sourceId) : "",
+        accountId: /^\d+$/.test(stringValue(filters.accountId)) ? String(filters.accountId) : "",
+        currencyCode: stringValue(filters.currencyCode),
+        transactionType: transactionTypes.includes(stringValue(filters.transactionType)) ? String(filters.transactionType) : "",
+        description: stringValue(filters.description),
+        minAmount: /^-?\d*(?:\.\d{0,2})?$/.test(stringValue(filters.minAmount)) ? stringValue(filters.minAmount) : "",
+        maxAmount: /^-?\d*(?:\.\d{0,2})?$/.test(stringValue(filters.maxAmount)) ? stringValue(filters.maxAmount) : "",
+        startDate: validDate(filters.startDate) ? String(filters.startDate) : "",
+        endDate: validDate(filters.endDate) ? String(filters.endDate) : "",
+        hideTrading212InterestCashbackAndDividends: booleanValue(filters.hideTrading212InterestCashbackAndDividends),
+        hideTransfers: booleanValue(filters.hideTransfers),
+        tagIds: Array.isArray(filters.tagIds) ? filters.tagIds.filter((value): value is string => typeof value === "string" && /^\d+$/.test(value)) : [],
+        untagged: booleanValue(filters.untagged),
+      },
+    },
+  };
 }
 
 export function saveUiPreferences(storage: PreferenceStorage | null, preferences: UiPreferences) {

@@ -1,7 +1,7 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Bar, CartesianGrid, ComposedChart, Legend, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import "../index.css";
 import { ClassificationPage } from "./ClassificationPage";
@@ -16,6 +16,12 @@ import { DataCoverageCard } from "./DataCoverageCard";
 import { economicTypeOptions, economicTypeOptionsForDirection, formatCompactMoney, formatMoney, formatTransactionDate, matchModeOptions, titleCase } from "./formatters";
 import type { Account, CashFlowSummary, CashFlowTrend, ClassificationMatchMode, ClassificationReviewGroup, ClassificationRule, DataCoverage, EconomicDirection, EconomicType, LatestImport, PayPalPaymentLink, Tag, TagRule, TagRuleDraft, Transaction, TransactionFilters, TransactionSummary } from "./types";
 import { browserPreferenceStorage, emptyTransactionFilters, loadUiPreferences, presetDateRange, saveUiPreferences, type DashboardDatePreset, type TrendGranularity, type WorkspacePage } from "./ui-preferences";
+
+import { readUrlState, writeUrlState, transactionsForPeriod } from "./url-state";
+
+function CurrencySection({ currency, label, children }: { currency: string; label: string; children: ReactNode }) {
+ return currency === "GBP" ? <section className="mt-5">{children}</section> : <details className="mt-5 rounded-lg border border-neutral-800 p-4"><summary className="cursor-pointer text-sm text-neutral-300">{currency} · {label}</summary><div className="mt-4">{children}</div></details>;
+}
 
 /*type LatestImport = {
   fileName: string;
@@ -178,7 +184,7 @@ function coverageStartSuggestion(coverage: DataCoverage | null, selectedStart: s
 const emptyTagRuleDraft: TagRuleDraft = { tagId: "", sourceId: "", description: "", matchMode: "exact", direction: "outflow" };
 
 export function App() {
-  const [initialPreferences] = useState(() => loadUiPreferences(browserPreferenceStorage()));
+  const [initialPreferences] = useState(() => readUrlState(window.location.search, loadUiPreferences(browserPreferenceStorage())));
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -346,8 +352,8 @@ export function App() {
     void load();
   }, []);
 
-  useEffect(() => {
-    saveUiPreferences(browserPreferenceStorage(), {
+  const previousPage = useRef(page);
+  const currentPreferences = {
       page,
       dashboard: {
         datePreset,
@@ -361,8 +367,44 @@ export function App() {
         completeDataOnly: transactionCompleteDataOnly,
         showingCashFlowExclusions,
       },
-    });
+  };
+  const preferencesRef = useRef(currentPreferences);
+  preferencesRef.current = currentPreferences;
+  useEffect(() => {
+    saveUiPreferences(browserPreferenceStorage(), currentPreferences);
+    const search = writeUrlState(currentPreferences);
+    if (window.location.search !== search) {
+      const method = previousPage.current === page ? "replaceState" : "pushState";
+      window.history[method](null, "", `${window.location.pathname}${search}${window.location.hash}`);
+    }
+    previousPage.current = page;
   }, [page, datePreset, dateRange, dashboardCompleteDataOnly, trendGranularity, transactionFilter, transactionFilters, transactionCompleteDataOnly, showingCashFlowExclusions]);
+  useEffect(() => {
+    const restore = () => {
+      const next = readUrlState(window.location.search, preferencesRef.current);
+      previousPage.current = next.page;
+      setPage(next.page);
+      setDatePreset(next.dashboard.datePreset);
+      setDateRange(next.dashboard.dateRange);
+      setDashboardCompleteDataOnly(next.dashboard.completeDataOnly);
+      setTrendGranularity(next.dashboard.trendGranularity);
+      setTransactionFilter(next.transactions.economicType);
+      setTransactionFilters(next.transactions.filters);
+      setTransactionCompleteDataOnly(next.transactions.completeDataOnly);
+      setShowingCashFlowExclusions(next.transactions.showingCashFlowExclusions);
+    };
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
+  const openPeriod = (period: string, currency: string) => {
+    const next = transactionsForPeriod(period, currency);
+    setTransactionFilter(next.economicType);
+    setTransactionFilters(next.filters);
+    setTransactionCompleteDataOnly(false);
+    setShowingCashFlowExclusions(false);
+    setPage("transactions");
+    window.scrollTo({ top: 0 });
+  };
 
   useEffect(() => {
     if (loading) return;
@@ -656,8 +698,8 @@ export function App() {
             {dashboardCompleteDataOnly && dashboardCoverageInterval ? <p className="mt-2 text-xs text-emerald-300">Using verified data through {dashboardQueryRange.endDate}.</p> : null}
             {cashFlowSummary === null ? <p className="mt-5 text-sm text-neutral-400">Loading cash flow…</p> : null}
             {cashFlowSummary?.length === 0 ? <p className="mt-5 text-sm text-neutral-400">No transactions for this range.</p> : null}
-            {cashFlowSummary?.map(summary => (
-              <div key={summary.currencyCode} className="mt-5">
+            {cashFlowSummary?.toSorted((a, b) => Number(b.currencyCode === "GBP") - Number(a.currencyCode === "GBP")).map(summary => (
+              <CurrencySection key={summary.currencyCode} currency={summary.currencyCode} label="overview">
                 <p className="text-sm font-medium text-neutral-300">{summary.currencyCode}</p>
                 <div className="mt-3 grid gap-4 sm:grid-cols-3">
                   <div className="rounded-2xl border border-neutral-800 bg-neutral-900/60 p-5"><p className="text-sm text-neutral-400">Income</p><p className="mt-2 text-2xl font-semibold text-emerald-300">{formatMoney(summary.incomeMinor, summary.currencyCode)}</p></div>
@@ -685,7 +727,7 @@ export function App() {
                   </table>
                 </div>
                 <p className="mt-2 text-xs text-neutral-600">Transfer activity includes internal account movements and is not reconciled across accounts.</p></details>
-              </div>
+              </CurrencySection>
             ))}
 
             <div className="mt-10 border-t border-neutral-800 pt-8">
@@ -693,7 +735,7 @@ export function App() {
                 <div>
                   <p className="text-xs uppercase tracking-[0.24em] text-neutral-500">Cash flow over time</p>
                   <h2 className="mt-2 text-xl font-semibold">Period-by-period view</h2>
-                  <p className="mt-1 text-sm text-neutral-400">Income and expenses are shown separately; transfers remain outside net cash flow.</p>
+                  <p className="mt-1 text-sm text-neutral-400">Select a month or year to explore its transactions. Transfers remain outside net cash flow.</p>
                 </div>
                 <div className="flex rounded-lg border border-neutral-700 p-1 text-sm">
                   {(["month", "year"] as const).map(granularity => (
@@ -702,15 +744,15 @@ export function App() {
                 </div>
               </div>
               {cashFlowTrend === null ? <p className="mt-5 text-sm text-neutral-400">Loading cash-flow trend…</p> : null}
-              {cashFlowTrend?.map(trend => {
+              {cashFlowTrend?.toSorted((a, b) => Number(b.currencyCode === "GBP") - Number(a.currencyCode === "GBP")).map(trend => {
                 const chartData = trend.periods.map(period => ({ ...period, expenseDisplayMinor: Math.abs(period.expenseMinor) }));
                 const netLineColor = trend.periods.some(period => period.netCashFlowMinor < 0) ? "#fca5a5" : "#6ee7b7";
                 return (
-                  <div key={trend.currencyCode} className="mt-6">
+                  <CurrencySection key={trend.currencyCode} currency={trend.currencyCode} label="period breakdown">
                     <p className="text-sm font-medium text-neutral-300">{trend.currencyCode}</p>
                     <div className="mt-3 h-72 rounded-2xl border border-neutral-800 bg-neutral-900/60 p-4">
                       <ResponsiveContainer width="100%" height="100%">
-                        <ComposedChart data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
+                        <ComposedChart style={{ cursor: "pointer" }} onClick={state => { const period = state.activeIndex == null ? undefined : chartData[Number(state.activeIndex)]; if (period) openPeriod(period.period, trend.currencyCode); }} data={chartData} margin={{ top: 8, right: 8, bottom: 0, left: 8 }}>
                           <CartesianGrid stroke="#262626" vertical={false} />
                           <XAxis dataKey="label" tick={{ fill: "#a3a3a3", fontSize: 12 }} axisLine={false} tickLine={false} />
                           <YAxis tickFormatter={value => formatCompactMoney(Number(value), trend.currencyCode)} tick={{ fill: "#a3a3a3", fontSize: 12 }} axisLine={false} tickLine={false} width={72} />
@@ -726,11 +768,11 @@ export function App() {
                       <table className="w-full min-w-[560px] text-left text-sm">
                         <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500"><tr><th className="px-4 py-3 font-medium">{trendGranularity === "month" ? "Month" : "Year"}</th><th className="px-4 py-3 text-right font-medium">Income</th><th className="px-4 py-3 text-right font-medium">Expenses</th><th className="px-4 py-3 text-right font-medium">Net cash flow</th></tr></thead>
                         <tbody className="divide-y divide-neutral-800">
-                          {trend.periods.map(period => <tr key={period.period} className="bg-neutral-950/30"><td className="px-4 py-3 text-neutral-100">{period.label}</td><td className="px-4 py-3 text-right text-emerald-300">{formatMoney(period.incomeMinor, trend.currencyCode)}</td><td className="px-4 py-3 text-right text-red-300">{formatMoney(Math.abs(period.expenseMinor), trend.currencyCode)}</td><td className={`px-4 py-3 text-right ${period.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(period.netCashFlowMinor, trend.currencyCode)}</td></tr>)}
+                          {trend.periods.map(period => <tr key={period.period} className="bg-neutral-950/30"><td className="px-4 py-3 text-neutral-100"><a className="underline decoration-neutral-600 underline-offset-4 hover:text-emerald-300" href={writeUrlState({ ...currentPreferences, page: "transactions", transactions: transactionsForPeriod(period.period, trend.currencyCode) })} onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openPeriod(period.period, trend.currencyCode); } }}>{period.label}</a></td><td className="px-4 py-3 text-right text-emerald-300">{formatMoney(period.incomeMinor, trend.currencyCode)}</td><td className="px-4 py-3 text-right text-red-300">{formatMoney(Math.abs(period.expenseMinor), trend.currencyCode)}</td><td className={`px-4 py-3 text-right ${period.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(period.netCashFlowMinor, trend.currencyCode)}</td></tr>)}
                         </tbody>
                       </table>
                     </div></details>
-                  </div>
+                  </CurrencySection>
                 );
               })}
             </div>

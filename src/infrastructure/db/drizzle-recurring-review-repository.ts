@@ -186,6 +186,7 @@ export class DrizzleRecurringReviewRepository implements RecurringReviewReposito
       const snapshot = this.payments.snapshotSync();
       const ids = Object.keys(decision.after!).map(Number);
       for (const id of ids) {
+        if (!decision.before![String(id)].payment && snapshot.spendingControls.some(c => c.paymentId === id)) throw new ReviewConflict("This payment has a spending category. Undo would remove it.");
         if (!decision.before![String(id)].payment && snapshot.transactionDecisions.some(d => d.paymentId === id)) throw new ReviewConflict("This payment has transaction decisions. Undo would remove them.");
         if (canonical(trackingState(snapshot, id)) !== canonical(decision.after![String(id)])) throw new ReviewConflict("This payment has later changes. Undo would overwrite them.");
       }

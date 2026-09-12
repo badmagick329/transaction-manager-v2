@@ -1,6 +1,8 @@
 export const frequencies = ["weekly", "monthly", "quarterly", "semiannual", "annual"] as const;
 export const frequencyLabels = { weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly · every 3 months", semiannual: "Every 6 months", annual: "Annual" };
 export type Frequency = typeof frequencies[number];
+export const annualCost = (amountMinor: number, frequency: Frequency) => amountMinor * ({ weekly: 52, monthly: 12, quarterly: 4, semiannual: 2, annual: 1 }[frequency]);
+export const monthlyCost = (amountMinor: number, frequency: Frequency) => Math.round(annualCost(amountMinor, frequency) / 12);
 export type RecurringMatchMode = "exact" | "starts_with" | "contains";
 export type RecurringPaymentInput = {
   name: string; kind: "subscription" | "bill" | "instalment";
@@ -12,9 +14,13 @@ export type RecurringPayment = RecurringPaymentInput & { id: number };
 export type PaymentMethodChange = { paymentId: number; accountId: number; description: string; matchMode: RecurringMatchMode; effectiveDate: string; previousEffectiveDate?: string; anchorDate: string | null; frequency: Frequency | null; amountMinor: number | null };
 export type RecurringTransaction = { id: number; accountId: number; currencyCode: string; description: string; amountMinor: number; transactionDate: string };
 export type RecurringTransactionDecision = { paymentId: number; transactionId: number; oneOff: boolean; priceWarningDismissed: boolean };
-export type RecurringSnapshot = { transactionDecisions: RecurringTransactionDecision[]; payments: RecurringPayment[]; methods: PaymentMethodChange[]; transactions: RecurringTransaction[]; coverage: Array<{ accountId: number; startDate: string; endDate: string }>; links: Array<{ transactionId: number; paymentId: number }> };
+export const spendingControls = ["unclassified", "fixed", "reducible", "cancellable"] as const;
+export type SpendingControl = typeof spendingControls[number];
+export type RecurringSpendingControl = { paymentId: number; control: SpendingControl };
+export type RecurringSnapshot = { spendingControls: RecurringSpendingControl[]; transactionDecisions: RecurringTransactionDecision[]; payments: RecurringPayment[]; methods: PaymentMethodChange[]; transactions: RecurringTransaction[]; coverage: Array<{ accountId: number; startDate: string; endDate: string }>; links: Array<{ transactionId: number; paymentId: number }> };
 export interface RecurringPaymentRepository {
   snapshot(): Promise<RecurringSnapshot>;
+  setSpendingControl(input: RecurringSpendingControl): Promise<void>;
   setTransactionDecision(input: RecurringTransactionDecision): Promise<void>;
   save(input: RecurringPaymentInput, id?: number): Promise<RecurringPayment>;
   link(transactionId: number, paymentId: number): Promise<void>;
@@ -48,7 +54,7 @@ export function scheduledDate(anchor: string, frequency: Frequency, cycle: numbe
   }
   return date.toISOString().slice(0, 10);
 }
-function cycleFor(anchor: string, frequency: Frequency, value: string) {
+export function cycleFor(anchor: string, frequency: Frequency, value: string) {
   if (frequency === "weekly") return Math.round((dateValue(value) - dateValue(anchor)) / day / 7);
   const a = new Date(dateValue(anchor)), b = new Date(dateValue(value));
   const estimate = Math.round(((b.getUTCFullYear() - a.getUTCFullYear()) * 12 + b.getUTCMonth() - a.getUTCMonth()) / (frequency === "monthly" ? 1 : frequency === "quarterly" ? 3 : frequency === "semiannual" ? 6 : 12));
@@ -133,8 +139,8 @@ export function recurringOverview(snapshot: RecurringSnapshot, today = new Date(
     }
     // One-off adjustments and temporary discounts are history, not a new recurring commitment.
     const expectedAmount = currentMethod.amountMinor;
-    return { ...payment, transactionDecisions, methods: methodsFor(payment), currentMethod, transactions, nextDate: payment.status === "active" ? nextDate : null,
-      monthlyEquivalentMinor: Math.round(expectedAmount * ({ weekly: 52 / 12, monthly: 1, quarterly: 1 / 3, semiannual: 1 / 6, annual: 1 / 12 }[currentMethod.frequency])),
+    return { ...payment, control: snapshot.spendingControls.find(c => c.paymentId === payment.id)?.control ?? "unclassified" as SpendingControl, transactionDecisions, methods: methodsFor(payment), currentMethod, transactions, nextDate: payment.status === "active" ? nextDate : null,
+      monthlyEquivalentMinor: monthlyCost(expectedAmount, currentMethod.frequency),
       priceChanged: !!latest && !isOneOff(latest) && !transactionDecisions.some(d => d.transactionId === latest.id && d.priceWarningDismissed) && Math.abs(latest.amountMinor) !== methodAt(payment, latest.transactionDate).amountMinor,
       needsReview: candidates.length !== transactions.length || sorted.some(t => owners.get(t.id)!.includes(payment.id) && owners.get(t.id)!.length > 1),
       paymentMissing: payment.status === "active" && endDate < today && covered,
@@ -170,5 +176,5 @@ export function recurringOverview(snapshot: RecurringSnapshot, today = new Date(
       break;
     }
   }
-  return { payments, suggestions };
+  return { payments, suggestions, coverage: snapshot.coverage };
 }

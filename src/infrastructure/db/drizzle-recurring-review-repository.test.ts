@@ -336,3 +336,14 @@ test("transaction decisions invalidate review evidence and protect annotated pay
   expect(f.payments.snapshotSync().transactionDecisions).toHaveLength(0);
   expect(f.repository.undo(applied.id).status).toBe("undone");
 });
+
+
+test("spending categories protect a payment from removal until cleared", async () => {
+  const f = fixture();
+  const applied = f.repository.submit(f.decision());
+  const paymentId = f.payments.snapshotSync().payments[0].id;
+  await f.payments.setSpendingControl({ paymentId, control: "fixed" });
+  expect(() => f.repository.undo(applied.id)).toThrow("spending category");
+  await f.payments.setSpendingControl({ paymentId, control: "unclassified" });
+  expect(f.repository.undo(applied.id).status).toBe("undone");
+});

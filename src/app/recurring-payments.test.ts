@@ -3,7 +3,7 @@ import { recurringOverview, scheduledDate, previewRecurringChange, type Recurrin
 
 const payment: RecurringPayment = { matchMode: "exact", id: 1, name: "TV licence", description: "TV LICENCE", accountId: 1, currencyCode: "GBP", amountMinor: 4400, frequency: "quarterly", anchorDate: "2026-01-31", status: "active", kind: "bill" };
 function snapshot(dates: string[], payments: RecurringPayment[] = []): RecurringSnapshot {
-  return { transactionDecisions: [], payments, methods: [], coverage: [], links: [], transactions: dates.map((transactionDate, index) => ({ id: index + 1, accountId: 1, currencyCode: "GBP", description: "TV LICENCE", amountMinor: -4400, transactionDate })) };
+  return { spendingControls: [], transactionDecisions: [], payments, methods: [], coverage: [], links: [], transactions: dates.map((transactionDate, index) => ({ id: index + 1, accountId: 1, currencyCode: "GBP", description: "TV LICENCE", amountMinor: -4400, transactionDate })) };
 }
 test("quarterly detection uses calendar months and month-end billing", () => {
   const result = recurringOverview(snapshot(["2026-01-31", "2026-04-30", "2026-07-31"]));

@@ -1,7 +1,7 @@
 import { and, eq, isNull, lt } from "drizzle-orm";
-import { recurringOverview, type RecurringTransactionDecision, recurringDescription, type PaymentMethodChange, type RecurringPaymentInput, type RecurringPaymentRepository } from "../../app/recurring-payments";
+import { recurringOverview, type RecurringTransactionDecision, type RecurringSpendingControl, recurringDescription, type PaymentMethodChange, type RecurringPaymentInput, type RecurringPaymentRepository } from "../../app/recurring-payments";
 import type { AppDatabase } from "./client";
-import { accounts, accountCoveragePeriods, cashFlowExclusions, recurringPayments, recurringTransactionDecisions, recurringPaymentLinks, recurringPaymentMethods, transactions } from "./schema";
+import { accounts, accountCoveragePeriods, cashFlowExclusions, recurringPayments, recurringSpendingControls, recurringTransactionDecisions, recurringPaymentLinks, recurringPaymentMethods, transactions } from "./schema";
 
 // Keep user tracking decisions separate from immutable imported payment evidence.
 export class DrizzleRecurringPaymentRepository implements RecurringPaymentRepository {
@@ -18,7 +18,16 @@ export class DrizzleRecurringPaymentRepository implements RecurringPaymentReposi
       this.db.select().from(recurringPaymentLinks).all(),
       this.db.select().from(recurringPaymentMethods).all(),
     ];
-    return { payments, transactions: expenses, coverage, links, methods, transactionDecisions: this.db.select().from(recurringTransactionDecisions).all() };
+    return { spendingControls: this.db.select().from(recurringSpendingControls).all(), payments, transactions: expenses, coverage, links, methods, transactionDecisions: this.db.select().from(recurringTransactionDecisions).all() };
+  }
+  async setSpendingControl(input: RecurringSpendingControl) {
+    const payment = this.db.select().from(recurringPayments).where(eq(recurringPayments.id, input.paymentId)).get();
+    if (!payment || payment.status === "dismissed") throw new Error("Choose a tracked recurring payment.");
+    if (input.control === "unclassified") {
+      this.db.delete(recurringSpendingControls).where(eq(recurringSpendingControls.paymentId, input.paymentId)).run();
+    } else {
+      this.db.insert(recurringSpendingControls).values(input).onConflictDoUpdate({ target: recurringSpendingControls.paymentId, set: input }).run();
+    }
   }
   // Decisions belong to one payment and charge; imported amounts and future warnings stay untouched.
   async setTransactionDecision(input: RecurringTransactionDecision) {

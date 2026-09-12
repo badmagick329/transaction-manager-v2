@@ -1,16 +1,25 @@
 import { recurringInputSchema, recurringMethodSchema } from "../../app/contracts/recurring-review";
 import { z } from "zod";
-import { recurringOverview, previewRecurringChange, type PaymentMethodChange, type RecurringPaymentInput, type RecurringPaymentRepository } from "../../app/recurring-payments";
+import { spendingControls, recurringOverview, previewRecurringChange, type PaymentMethodChange, type RecurringPaymentInput, type RecurringPaymentRepository } from "../../app/recurring-payments";
 
 const inputSchema = recurringInputSchema.extend({ id: z.number().int().positive().optional() });
 const methodSchema = recurringMethodSchema;
 export function createRecurringRoutes(repository: RecurringPaymentRepository) {
   return {
+    "/api/recurring-payments/spending-control": {
+      POST: async (request: Request) => {
+        try {
+          const input = z.object({ paymentId: z.number().int().positive(), control: z.enum(spendingControls) }).strict().parse(await request.json());
+          await repository.setSpendingControl(input as import("../../app/recurring-payments").RecurringSpendingControl);
+          return Response.json({ ok: true });
+        } catch (error) { return Response.json({ error: error instanceof z.ZodError ? "Choose a valid spending category." : error instanceof Error ? error.message : "Unable to save spending category." }, { status: 400 }); }
+      },
+    },
     "/api/recurring-payments/transaction-decision": {
       POST: async (request: Request) => {
         try {
           const input = z.object({ paymentId: z.number().int().positive(), transactionId: z.number().int().positive(), oneOff: z.boolean(), priceWarningDismissed: z.boolean() }).strict().parse(await request.json());
-          await repository.setTransactionDecision(input);
+          await repository.setTransactionDecision(input as import("../../app/recurring-payments").RecurringTransactionDecision);
           return Response.json({ ok: true });
         } catch (error) { return Response.json({ error: error instanceof z.ZodError ? "Choose a payment, transaction, and valid decision." : error instanceof Error ? error.message : "Unable to save transaction decision." }, { status: 400 }); }
       },

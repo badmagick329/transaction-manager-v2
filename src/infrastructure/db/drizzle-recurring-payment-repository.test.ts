@@ -104,3 +104,24 @@ test("transaction decisions persist, validate ownership, and can be reversed thr
     expect((await post(decision)).status).toBe(400);
   } finally { db.$client.close(); }
 });
+
+
+test("spending control is explicitly chosen, persists across billing edits, and validates requests", async () => {
+  const db = createDb(join(mkdtempSync(join(tmpdir(), "recurring-control-")), "app.db"));
+  migrate(db, { migrationsFolder: "drizzle" });
+  try {
+    const source = db.insert(sources).values({ slug: "test", name: "Test", kind: "bank" }).returning().get();
+    const account = db.insert(accounts).values({ sourceId: source.id, name: "Current", kind: "bank_account", currencyCode: "GBP" }).returning().get();
+    const repository = new DrizzleRecurringPaymentRepository(db);
+    const payment = await repository.save({ name: "Gym", kind: "subscription", accountId: account.id, currencyCode: "GBP", description: "GYM", matchMode: "exact", amountMinor: 2899, frequency: "monthly", anchorDate: "2026-04-01", status: "active" });
+    const post = (body: unknown) => createRecurringRoutes(repository)["/api/recurring-payments/spending-control"].POST(new Request("http://localhost/api/recurring-payments/spending-control", { method: "POST", body: JSON.stringify(body) }));
+    expect(recurringOverview(await repository.snapshot()).payments[0].control).toBe("unclassified");
+    expect((await post({ paymentId: payment.id, control: "reducible" })).status).toBe(200);
+    await repository.changeMethod({ paymentId: payment.id, accountId: account.id, description: "GYM", matchMode: "exact", amountMinor: 2999, frequency: null, anchorDate: null, effectiveDate: "2026-05-01" });
+    expect(recurringOverview(await new DrizzleRecurringPaymentRepository(db).snapshot()).payments[0].control).toBe("reducible");
+    expect((await post({ paymentId: payment.id, control: "whatever" })).status).toBe(400);
+    expect((await post({ paymentId: 9999, control: "fixed" })).status).toBe(400);
+    expect((await post({ paymentId: payment.id, control: "unclassified" })).status).toBe(200);
+    expect((await repository.snapshot()).spendingControls).toEqual([]);
+  } finally { db.$client.close(); }
+});

@@ -370,6 +370,11 @@ export const recurringPayments = sqliteTable("recurring_payments", {
   status: text("status", { enum: ["active", "paused", "cancelled", "dismissed"] }).notNull(),
 });
 
+export const recurringSpendingControls = sqliteTable("recurring_spending_controls", {
+  paymentId: integer("payment_id").primaryKey().references(() => recurringPayments.id),
+  control: text("control", { enum: ["unclassified", "fixed", "reducible", "cancellable"] }).notNull(),
+});
+
 export const recurringPaymentLinks = sqliteTable("recurring_payment_links", {
   transactionId: integer("transaction_id").primaryKey().references(() => transactions.id),
   paymentId: integer("payment_id").notNull().references(() => recurringPayments.id),
@@ -411,6 +416,7 @@ export const schema = {
   recurringReviewDecisions,
   recurringPaymentMethods,
   recurringTransactionDecisions,
+  recurringSpendingControls,
   recurringPaymentLinks,
   recurringPayments,
   sources,

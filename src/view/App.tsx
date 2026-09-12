@@ -766,14 +766,14 @@ export function App() {
                         </ComposedChart>
                       </ResponsiveContainer>
                     </div>
-                    <details className="mt-4"><summary className="cursor-pointer text-sm text-neutral-400">View period totals</summary><div className="mt-3 overflow-x-auto rounded-lg border border-neutral-800">
+                    <div className="mt-4 overflow-x-auto rounded-lg border border-neutral-800">
                       <table className="w-full min-w-[560px] text-left text-sm">
                         <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500"><tr><th className="px-4 py-3 font-medium">{trendGranularity === "month" ? "Month" : "Year"}</th><th className="px-4 py-3 text-right font-medium">Net cash flow</th><th className="px-4 py-3 text-right font-medium">Expenses</th><th className="px-4 py-3 text-right font-medium">Income</th></tr></thead>
                         <tbody className="divide-y divide-neutral-800">
                           {trend.periods.map(period => <tr key={period.period} className="bg-neutral-950/30"><td className="px-4 py-3 text-neutral-100"><a className="underline decoration-neutral-600 underline-offset-4 hover:text-emerald-300" href={writeUrlState({ ...currentPreferences, page: "transactions", transactions: transactionsForPeriod(period.period, trend.currencyCode) })} onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); openPeriod(period.period, trend.currencyCode); } }}>{period.label}</a></td><td className={`px-4 py-3 text-right ${period.netCashFlowMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>{formatMoney(period.netCashFlowMinor, trend.currencyCode)}</td><td className="px-4 py-3 text-right text-red-300">{formatMoney(Math.abs(period.expenseMinor), trend.currencyCode)}</td><td className="px-4 py-3 text-right text-emerald-300">{formatMoney(period.incomeMinor, trend.currencyCode)}</td></tr>)}
                         </tbody>
                       </table>
-                    </div></details>
+                    </div>
                   </CurrencySection>
                 );
               })}

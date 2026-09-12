@@ -1,4 +1,6 @@
 import { serve } from "bun";
+import { createRecurringAgentRoutes } from "./infrastructure/http/recurring-agent-routes";
+import { DrizzleRecurringReviewRepository } from "./infrastructure/db/drizzle-recurring-review-repository";
 import { createRecurringRoutes } from "./infrastructure/http/recurring-routes";
 import { DrizzleRecurringPaymentRepository } from "./infrastructure/db/drizzle-recurring-payment-repository";
 import { isAbsolute, relative, resolve } from "node:path";
@@ -24,7 +26,7 @@ export async function startApp() {
   const classifications = createClassificationActions(classificationRepository);
   const reconciliation = createPayPalPaymentReconciliation(new DrizzlePayPalReconciliationRepository(db));
   const tagging = createTaggingActions(new DrizzleTaggingRepository(db));
-  const routes = { ...createRecurringRoutes(new DrizzleRecurringPaymentRepository(db)), ...createHttpRoutes({
+  const routes = { ...createRecurringAgentRoutes(new DrizzleRecurringReviewRepository(db)), ...createRecurringRoutes(new DrizzleRecurringPaymentRepository(db)), ...createHttpRoutes({
     queries,
     classifications,
     reconciliation,

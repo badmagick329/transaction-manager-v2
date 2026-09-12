@@ -387,7 +387,14 @@ export const recurringPaymentMethods = sqliteTable("recurring_payment_methods", 
   effectiveDate: text("effective_date").notNull(),
 }, table => ({ effectiveUnique: uniqueIndex("recurring_methods_payment_date_unique").on(table.paymentId, table.effectiveDate) }));
 
+export const recurringReviewDecisions = sqliteTable("recurring_review_decisions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  requestId: text("request_id").notNull().unique(),
+  decision: text("decision", { mode: "json" }).$type<import("../../app/recurring-review").ReviewDecision>().notNull(),
+});
+
 export const schema = {
+  recurringReviewDecisions,
   recurringPaymentMethods,
   recurringPaymentLinks,
   recurringPayments,

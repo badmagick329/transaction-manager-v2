@@ -1,4 +1,5 @@
 import { Button } from '../components/ui/button';
+import { RecurringAgentReview } from './RecurringAgentReview';
 import { Input } from '../components/ui/input';
 import { EditorDialog } from '../components/ui/editor-dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
@@ -115,6 +116,7 @@ export function RecurringPaymentsPage({ accounts, seedTransactionId, clearSeed, 
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-xl font-semibold">Recurring payments</h2><p className="mt-1 text-sm text-neutral-400">Subscriptions, bills, and instalments. Dates and costs are estimates from your records.</p></div><Button variant="outline" onClick={() => { clearSeed(); edit(blank(accounts)); }} disabled={busy}>Add manually</Button></div>
     {error && !draft && !method && <p role="alert" className="text-sm text-red-400">{error}</p>}
     {notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
+    <RecurringAgentReview accounts={accounts} refreshKey={data} onChanged={load} />
     {method && <EditorDialog title="Update billing & matching" busy={busy} onClose={() => setMethod(null)}><form className="space-y-4" onSubmit={e => { e.preventDefault(); void saveMethod(); }}>
       {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       <p className="text-sm text-neutral-400">Change the price, billing schedule or account from a specific date. Earlier payments keep their recorded settings.</p>

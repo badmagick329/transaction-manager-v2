@@ -185,7 +185,7 @@ const emptyTagRuleDraft: TagRuleDraft = { tagId: "", sourceId: "", description: 
 
 export function App() {
   const [navigationOpen, setNavigationOpen] = useState(false);
-  const [initialPreferences] = useState(() => readUrlState(window.location.search, loadUiPreferences(browserPreferenceStorage())));
+  const [initialPreferences] = useState(() => readUrlState(window.location.href, loadUiPreferences(browserPreferenceStorage())));
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [latestImport, setLatestImport] = useState<LatestImport>(null);
   const [transactions, setTransactions] = useState<Transaction[]>([]);
@@ -373,16 +373,16 @@ export function App() {
   preferencesRef.current = currentPreferences;
   useEffect(() => {
     saveUiPreferences(browserPreferenceStorage(), currentPreferences);
-    const search = writeUrlState(currentPreferences);
-    if (window.location.search !== search) {
+    const href = writeUrlState(currentPreferences);
+    if (`${window.location.pathname}${window.location.search}` !== href) {
       const method = previousPage.current === page ? "replaceState" : "pushState";
-      window.history[method](null, "", `${window.location.pathname}${search}${window.location.hash}`);
+      window.history[method](null, "", `${href}${window.location.hash}`);
     }
     previousPage.current = page;
   }, [page, datePreset, dateRange, dashboardCompleteDataOnly, trendGranularity, transactionFilter, transactionFilters, transactionCompleteDataOnly, showingCashFlowExclusions]);
   useEffect(() => {
     const restore = () => {
-      const next = readUrlState(window.location.search, preferencesRef.current);
+      const next = readUrlState(window.location.href, preferencesRef.current);
       previousPage.current = next.page;
       setPage(next.page);
       setDatePreset(next.dashboard.datePreset);
@@ -638,7 +638,7 @@ export function App() {
           <nav id="workspace-navigation" className={`${navigationOpen ? "flex" : "hidden"} mt-4 flex-col gap-1 min-[1200px]:mt-6 min-[1200px]:flex`} aria-label="Workspace pages">
             {(["dashboard", "transactions", "recurring", "classification", "reconciliation", "tags"] as const).map(item => <div key={item}>
               {item === "classification" && <p className="mb-2 mt-6 hidden px-3 text-xs text-neutral-500 min-[1200px]:block">Manage data</p>}
-              <Button variant={page === item ? "secondary" : "ghost"} className="w-full justify-start" aria-current={page === item ? "page" : undefined} onClick={() => { setNavigationOpen(false); setPage(item); window.scrollTo({ top: 0 }); }}>{item === "recurring" ? "Recurring payments" : titleCase(item)}</Button>
+              <Button asChild variant={page === item ? "secondary" : "ghost"} className="w-full justify-start"><a href={writeUrlState({ ...currentPreferences, page: item })} aria-current={page === item ? "page" : undefined} onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); setNavigationOpen(false); setPage(item); window.scrollTo({ top: 0 }); } }}>{item === "recurring" ? "Recurring payments" : titleCase(item)}</a></Button>
             </div>)}
           </nav>
         </header>

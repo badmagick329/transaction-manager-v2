@@ -5,11 +5,11 @@ import { readUrlState, writeUrlState, transactionsForPeriod } from './url-state'
 test('explicit transaction URLs clear unrelated saved filters', () => {
  const saved = defaultUiPreferences();
  saved.transactions.filters.description = 'old search';
- const next = readUrlState('?page=transactions&from=2024-02-01&to=2024-02-29&currency=GBP', saved);
+ const next = readUrlState('/transactions?from=2024-02-01&to=2024-02-29&currency=GBP', saved);
  expect(next.transactions.filters.description).toBe('');
  expect(next.transactions.filters.minAmount).toBe('');
  expect(next.transactions.filters.endDate).toBe('2024-02-29');
- expect(readUrlState('', saved)).toBe(saved);
+ expect(readUrlState('/transactions', saved).transactions.filters.description).toBe('');
 });
 test('all transaction filters survive a shared URL', () => {
  const state = defaultUiPreferences(); state.page = 'transactions';
@@ -21,11 +21,29 @@ test('custom dashboard range and yearly view survive URLs', () => {
  expect(readUrlState(writeUrlState(state), defaultUiPreferences()).dashboard).toEqual(state.dashboard);
 });
 test('invalid dates and amounts from URLs are discarded', () => {
- const state = readUrlState('?page=transactions&from=2024-02-30&min=bad&tag=x', defaultUiPreferences());
+ const state = readUrlState('/transactions?from=2024-02-30&min=bad&tag=x', defaultUiPreferences());
  expect(state.transactions.filters.startDate).toBe(''); expect(state.transactions.filters.minAmount).toBe(''); expect(state.transactions.filters.tagIds).toEqual([]);
 });
 test('period drill-down handles leap years and year boundaries', () => {
  expect(transactionsForPeriod('2024-02', 'GBP').filters.endDate).toBe('2024-02-29');
  expect(transactionsForPeriod('2025-12', 'USD').filters.endDate).toBe('2025-12-31');
  expect(transactionsForPeriod('2024', 'GBP').filters).toMatchObject({startDate: '2024-01-01', endDate: '2024-12-31', currencyCode: 'GBP', description: '', hideTransfers: false});
+});
+
+test('page paths round-trip independently of the saved page', () => {
+ const saved = defaultUiPreferences(); saved.page = 'tags';
+ for (const page of ['dashboard', 'classification', 'reconciliation', 'tags', 'recurring', 'transactions'] as const) {
+  const href = writeUrlState({ ...defaultUiPreferences(), page });
+  expect(href.split('?')[0]).toBe(`/${page}`);
+  expect(href).not.toContain('page=');
+  expect(readUrlState(href, saved).page).toBe(page);
+ }
+ expect(writeUrlState({ ...saved, page: 'recurring' })).toBe('/recurring');
+ expect(readUrlState('/', saved).page).toBe('dashboard');
+});
+test('history URLs restore the page and its filters', () => {
+ const saved = defaultUiPreferences();
+ const transactions = readUrlState('/transactions?q=rent&currency=GBP', saved);
+ const recurring = readUrlState('/recurring', transactions);
+ expect(readUrlState('/transactions?q=rent&currency=GBP', recurring)).toEqual(transactions);
 });

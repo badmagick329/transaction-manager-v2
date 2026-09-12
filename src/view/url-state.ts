@@ -1,11 +1,11 @@
 import { defaultUiPreferences, parseUiPreferences, type UiPreferences } from "./ui-preferences";
 
 /** Explicit links must not inherit unrelated filters from the recipient's browser. */
-export function readUrlState(search: string, saved: UiPreferences, now = new Date()): UiPreferences {
-  const query = new URLSearchParams(search);
-  if (!query.has("page")) return saved;
+export function readUrlState(href: string, saved: UiPreferences, now = new Date()): UiPreferences {
+  const url = new URL(href, "http://localhost");
+  const query = url.searchParams;
   const defaults = defaultUiPreferences(now);
-  const page = query.get("page");
+  const page = url.pathname.slice(1) || "dashboard";
   const parsed = parseUiPreferences({
     page,
     dashboard: {
@@ -37,7 +37,7 @@ export function readUrlState(search: string, saved: UiPreferences, now = new Dat
 }
 
 export function writeUrlState(state: UiPreferences): string {
-  const query = new URLSearchParams({ page: state.page });
+  const query = new URLSearchParams();
   const put = (key: string, value: string | boolean) => {
     if (value) query.set(key, value === true ? "1" : value);
   };
@@ -63,7 +63,8 @@ export function writeUrlState(state: UiPreferences): string {
     put("untagged", filters.untagged);
     put("complete", completeDataOnly); put("excluded", showingCashFlowExclusions);
   }
-  return `?${query}`;
+  const search = query.toString();
+  return `/${state.page}${search ? `?${search}` : ""}`;
 }
 
 /** Drill-down starts clean so previous searches cannot silently hide the month's activity. */

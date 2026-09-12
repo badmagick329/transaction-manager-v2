@@ -1,3 +1,5 @@
+import { AmazonOrdersPage } from "./AmazonOrdersPage";
+import { AmazonTransactionDetails } from "./AmazonTransactionDetails";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
@@ -373,7 +375,7 @@ export function App() {
   preferencesRef.current = currentPreferences;
   useEffect(() => {
     saveUiPreferences(browserPreferenceStorage(), currentPreferences);
-    const href = writeUrlState(currentPreferences);
+    const href = page === "amazon-orders" && window.location.pathname === "/amazon-orders" ? `${window.location.pathname}${window.location.search}` : writeUrlState(currentPreferences);
     if (`${window.location.pathname}${window.location.search}` !== href) {
       const method = previousPage.current === page ? "replaceState" : "pushState";
       window.history[method](null, "", `${href}${window.location.hash}`);
@@ -628,7 +630,7 @@ export function App() {
     transactionFilters.hideTrading212InterestCashbackAndDividends && "Trading 212 rewards hidden",
     transactionCompleteDataOnly && "Verified data only",
   ].filter(Boolean);
-  const transactionDetails = (transaction: Transaction) => <>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}{transaction.recurringPayment ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setRecurringSeed(null); setSelectedRecurringId(transaction.recurringPayment!.id); setPage("recurring"); }}>Tracked: {transaction.recurringPayment.name}</button> : transaction.economicType === "expense" && !transaction.isExcludedFromCashFlow ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setSelectedRecurringId(null); setRecurringSeed(transaction.id); setPage("recurring"); }}>Track as recurring payment</button> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></>;
+  const transactionDetails = (transaction: Transaction) => <><AmazonTransactionDetails transactionId={transaction.id} count={transaction.amazonOrderCount} />{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}{transaction.recurringPayment ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setRecurringSeed(null); setSelectedRecurringId(transaction.recurringPayment!.id); setPage("recurring"); }}>Tracked: {transaction.recurringPayment.name}</button> : transaction.economicType === "expense" && !transaction.isExcludedFromCashFlow ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setSelectedRecurringId(null); setRecurringSeed(transaction.id); setPage("recurring"); }}>Track as recurring payment</button> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></>;
   const advancedFilterCount = activeFilterLabels.length;
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 min-[1200px]:pl-56">
@@ -636,9 +638,9 @@ export function App() {
         <header className="mb-6 border-b border-neutral-800 pb-4 min-[1200px]:fixed min-[1200px]:inset-y-0 min-[1200px]:left-0 min-[1200px]:mb-0 min-[1200px]:w-56 min-[1200px]:border-b-0 min-[1200px]:border-r min-[1200px]:bg-neutral-950 min-[1200px]:p-5">
           <div className="flex items-center justify-between gap-3"><h1 className="text-lg font-semibold tracking-tight">Transaction Manager</h1><Button variant="outline" className="min-[1200px]:hidden" aria-expanded={navigationOpen} aria-controls="workspace-navigation" onClick={() => setNavigationOpen(open => !open)}>{navigationOpen ? "Close menu" : "Menu"}</Button></div>
           <nav id="workspace-navigation" className={`${navigationOpen ? "flex" : "hidden"} mt-4 flex-col gap-1 min-[1200px]:mt-6 min-[1200px]:flex`} aria-label="Workspace pages">
-            {(["dashboard", "transactions", "recurring", "classification", "reconciliation", "tags"] as const).map(item => <div key={item}>
+            {(["dashboard", "transactions", "amazon-orders", "recurring", "classification", "reconciliation", "tags"] as const).map(item => <div key={item}>
               {item === "classification" && <p className="mb-2 mt-6 hidden px-3 text-xs text-neutral-500 min-[1200px]:block">Manage data</p>}
-              <Button asChild variant={page === item ? "secondary" : "ghost"} className="w-full justify-start"><a href={writeUrlState({ ...currentPreferences, page: item })} aria-current={page === item ? "page" : undefined} onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); setNavigationOpen(false); setPage(item); window.scrollTo({ top: 0 }); } }}>{item === "recurring" ? "Recurring payments" : titleCase(item)}</a></Button>
+              <Button asChild variant={page === item ? "secondary" : "ghost"} className="w-full justify-start"><a href={writeUrlState({ ...currentPreferences, page: item })} aria-current={page === item ? "page" : undefined} onClick={event => { if (event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) { event.preventDefault(); setNavigationOpen(false); setPage(item); window.scrollTo({ top: 0 }); } }}>{item === "recurring" ? "Recurring payments" : item === "amazon-orders" ? "Amazon orders" : titleCase(item)}</a></Button>
             </div>)}
           </nav>
         </header>
@@ -892,6 +894,7 @@ export function App() {
         */}
 
         {page === "reconciliation" ? <ReconciliationPage loading={loading} links={payPalLinks} savingKey={savingKey} updateLink={(linkId, status) => void updatePayPalLink(linkId, status)} /> : null}
+        {page === "amazon-orders" ? <AmazonOrdersPage accounts={accounts} /> : null}
         {page === "recurring" ? <RecurringPaymentsPage selectedPaymentId={selectedRecurringId} accounts={accounts} seedTransactionId={recurringSeed} clearSeed={() => setRecurringSeed(null)} /> : null}
         {page === "tags" ? <TagsPage tags={tags} rules={tagRules} accounts={accounts} loading={loading} savingKey={savingKey} ruleDraft={tagRuleDraft} setRuleDraft={setTagRuleDraft} createTag={createTag} renameTag={renameTag} deleteTag={deleteTag} saveRule={saveTagRule} deleteRule={deleteTagRule} /> : null}
         {/*

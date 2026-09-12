@@ -1,3 +1,5 @@
+import type { AmazonRepository } from "../../app/ports/amazon-repository";
+import { importAmazonFile } from "../../app/use-cases/import-amazon-file";
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rename, watch } from "node:fs/promises";
 import { basename, extname, join, resolve } from "node:path";
@@ -6,6 +8,7 @@ import { importStandardFile, parseStandardImportFile } from "../../app/use-cases
 
 type WatchedImportsOptions = {
   repository: ImportRepository;
+  amazonRepository?: AmazonRepository;
   rootPath?: string;
   logger?: Pick<Console, "error" | "info">;
   afterProcessedImport?: () => Promise<void>;
@@ -20,6 +23,7 @@ type ImportPaths = {
 
 export async function startWatchedImports({
   repository,
+  amazonRepository,
   rootPath = process.env.IMPORTS_DIR ?? resolve(process.env.DATA_DIR ?? resolve(process.cwd(), "data"), "imports"),
   logger = console,
   afterProcessedImport,
@@ -37,12 +41,12 @@ export async function startWatchedImports({
     const entries = await readdir(paths.incoming, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isFile() && extname(entry.name).toLowerCase() === ".json") {
-        await claimAndProcess(join(paths.incoming, entry.name), paths, repository, logger, afterProcessedImport);
+        await claimAndProcess(join(paths.incoming, entry.name), paths, repository, logger, afterProcessedImport, amazonRepository);
       }
     }
   };
 
-  await recoverProcessingFiles(paths, repository, logger);
+  await recoverProcessingFiles(paths, repository, logger, amazonRepository);
   await processIncoming();
 
   const watcher = watch(paths.incoming);
@@ -84,6 +88,7 @@ async function recoverProcessingFiles(
   paths: ImportPaths,
   repository: ImportRepository,
   logger: Pick<Console, "error" | "info">,
+  amazonRepository?: AmazonRepository,
 ) {
   const entries = await readdir(paths.processing, { withFileTypes: true });
   for (const entry of entries) {
@@ -98,7 +103,7 @@ async function recoverProcessingFiles(
       } else if (batch?.status === "failed") {
         await moveToDestination(path, paths.failed, fileHash);
       } else {
-        await processClaimedFile(path, paths, repository, logger, undefined);
+        await processClaimedFile(path, paths, repository, logger, undefined, amazonRepository);
       }
     } catch (error) {
       logger.error(`Unable to recover import ${entry.name}`, error);
@@ -112,6 +117,7 @@ async function claimAndProcess(
   repository: ImportRepository,
   logger: Pick<Console, "error" | "info">,
   afterProcessedImport?: () => Promise<void>,
+  amazonRepository?: AmazonRepository,
 ) {
   const name = basename(incomingPath);
   const claimedPath = join(paths.processing, name);
@@ -121,7 +127,7 @@ async function claimAndProcess(
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") logger.error(`Unable to claim import ${name}`, error);
     return;
   }
-  await processClaimedFile(claimedPath, paths, repository, logger, afterProcessedImport);
+  await processClaimedFile(claimedPath, paths, repository, logger, afterProcessedImport, amazonRepository);
 }
 
 async function processClaimedFile(
@@ -130,14 +136,19 @@ async function processClaimedFile(
   repository: ImportRepository,
   logger: Pick<Console, "error" | "info">,
   afterProcessedImport?: () => Promise<void>,
+  amazonRepository?: AmazonRepository,
 ) {
   const fileName = basename(claimedPath);
   const fileHash = await hashFile(claimedPath);
 
   try {
     const json = JSON.parse(await readFile(claimedPath, "utf8"));
-    const importFile = parseStandardImportFile(json);
-    const result = await importStandardFile(repository, { fileName, fileHash, importFile });
+    const isAmazon = json?.kind === "amazon-orders";
+    if (isAmazon && !amazonRepository) throw new Error("Amazon importer is not configured");
+    const importFile = isAmazon ? null : parseStandardImportFile(json);
+    const result = isAmazon
+      ? await importAmazonFile(amazonRepository!, repository, { fileName, fileHash, value: json })
+      : await importStandardFile(repository, { fileName, fileHash, importFile: importFile! });
 
     if (result.kind === "failed") {
       await moveToDestination(claimedPath, paths.failed, fileHash);
@@ -145,7 +156,7 @@ async function processClaimedFile(
       return;
     }
 
-    if (result.kind === "processed" && (importFile.source.slug === "hsbc" || importFile.source.slug === "paypal") && afterProcessedImport) {
+    if (result.kind === "processed" && importFile && (importFile.source.slug === "hsbc" || importFile.source.slug === "paypal") && afterProcessedImport) {
       try {
         await afterProcessedImport();
       } catch (error) {

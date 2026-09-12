@@ -411,7 +411,45 @@ export const recurringReviewReports = sqliteTable("recurring_review_reports", {
   report: text("report", { mode: "json" }).$type<import("../../app/recurring-review").ReviewReport>().notNull(),
 });
 
+export const amazonOrders = sqliteTable("amazon_orders", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  marketplace: text("marketplace").notNull(), orderId: text("order_id").notNull(),
+  revisionId: integer("revision_id"),
+}, t => ({ identity: uniqueIndex("amazon_order_identity").on(t.marketplace, t.orderId) }));
+
+export const amazonRevisions = sqliteTable("amazon_revisions", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  orderId: integer("order_id").notNull().references(() => amazonOrders.id),
+  data: text("data", { mode: "json" }).$type<import("../../app/contracts/amazon-orders").AmazonOrder>().notNull(),
+  incomingData: text("incoming_data", { mode: "json" }).$type<import("../../app/contracts/amazon-orders").AmazonOrder>().notNull(),
+  source: text("source", { mode: "json" }).$type<import("../../app/contracts/amazon-orders").AmazonImport["source"]>().notNull(),
+  fingerprint: text("fingerprint").notNull(),
+  status: text("status", { enum: ["accepted", "pending", "rejected"] }).notNull(),
+  createdAt: text("created_at").notNull().$defaultFn(isoNow),
+}, t => ({ identity: uniqueIndex("amazon_revision_identity").on(t.orderId, t.fingerprint) }));
+
+export const amazonLinks = sqliteTable("amazon_links", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  orderId: integer("order_id").notNull().references(() => amazonOrders.id),
+  transactionId: integer("transaction_id").notNull().references(() => transactions.id),
+  kind: text("kind", { enum: ["purchase", "refund"] }).notNull(), amountMinor: integer("amount_minor").notNull(),
+  allocations: text("allocations", { mode: "json" }).$type<Array<{ itemId: string; amountMinor: number }>>().notNull(),
+  status: text("status", { enum: ["confirmed", "rejected", "unlinked", "needs_review"] }).notNull(),
+}, t => ({ identity: uniqueIndex("amazon_link_identity").on(t.orderId, t.transactionId, t.kind) }));
+
+export const amazonMappings = sqliteTable("amazon_card_mappings", {
+  id: integer("id").primaryKey({ autoIncrement: true }), brand: text("brand").notNull(), lastFour: text("last_four").notNull(),
+  accountId: integer("account_id").notNull().references(() => accounts.id),
+}, t => ({ identity: uniqueIndex("amazon_mapping_identity").on(t.brand, t.lastFour) }));
+
+export const amazonHistory = sqliteTable("amazon_history", {
+  id: integer("id").primaryKey({ autoIncrement: true }), orderId: integer("order_id").references(() => amazonOrders.id),
+  action: text("action").notNull(), detail: text("detail", { mode: "json" }).$type<unknown>().notNull(),
+  createdAt: text("created_at").notNull().$defaultFn(isoNow),
+});
+
 export const schema = {
+  amazonOrders, amazonRevisions, amazonLinks, amazonMappings, amazonHistory,
   recurringReviewReports,
   recurringReviewDecisions,
   recurringPaymentMethods,

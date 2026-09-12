@@ -1,3 +1,5 @@
+import { createAmazonRoutes } from "./infrastructure/http/amazon-routes";
+import { DrizzleAmazonRepository } from "./infrastructure/db/drizzle-amazon-repository";
 import { serve } from "bun";
 import { createRecurringAgentRoutes } from "./infrastructure/http/recurring-agent-routes";
 import { DrizzleRecurringReviewRepository } from "./infrastructure/db/drizzle-recurring-review-repository";
@@ -26,7 +28,8 @@ export async function startApp() {
   const classifications = createClassificationActions(classificationRepository);
   const reconciliation = createPayPalPaymentReconciliation(new DrizzlePayPalReconciliationRepository(db));
   const tagging = createTaggingActions(new DrizzleTaggingRepository(db));
-  const routes = { ...createRecurringAgentRoutes(new DrizzleRecurringReviewRepository(db)), ...createRecurringRoutes(new DrizzleRecurringPaymentRepository(db)), ...createHttpRoutes({
+  const amazonRepository = new DrizzleAmazonRepository(db);
+  const routes = { ...createAmazonRoutes(amazonRepository), ...createRecurringAgentRoutes(new DrizzleRecurringReviewRepository(db)), ...createRecurringRoutes(new DrizzleRecurringPaymentRepository(db)), ...createHttpRoutes({
     queries,
     classifications,
     reconciliation,
@@ -35,7 +38,7 @@ export async function startApp() {
 
   await classificationRepository.ensureTrading212DefaultRules();
   await reconciliation.proposeLinks();
-  await startWatchedImports({ repository: new DrizzleImportRepository(db), afterProcessedImport: reconciliation.proposeLinks });
+  await startWatchedImports({ amazonRepository, repository: new DrizzleImportRepository(db), afterProcessedImport: reconciliation.proposeLinks });
 
   const server = serve({
     hostname: process.env.HOST ?? "0.0.0.0",

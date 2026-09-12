@@ -8,6 +8,7 @@ export type AccountListItem = {
 };
 
 export type TransactionListItem = {
+  amazonOrderCount: number;
   id: number;
   accountId: number;
   accountName: string;

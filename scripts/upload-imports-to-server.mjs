@@ -1,3 +1,4 @@
+import { amazonImportSchema } from "../src/app/contracts/amazon-orders";
 import { randomUUID } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { basename, extname, parse, resolve } from "node:path";
@@ -60,7 +61,8 @@ async function validateImportFile(filePath) {
   if (extname(filePath).toLowerCase() !== ".json") throw new Error(`${filePath} is not a JSON file.`);
   if (!(await stat(filePath)).isFile()) throw new Error(`${filePath} is not a file.`);
 
-  const parsed = standardImportFileSchema.safeParse(JSON.parse(await readFile(filePath, "utf8")));
+  const value = JSON.parse(await readFile(filePath, "utf8"));
+  const parsed = (value?.kind === "amazon-orders" ? amazonImportSchema : standardImportFileSchema).safeParse(value);
   if (!parsed.success) throw new Error(`${filePath} is not a valid standard import: ${parsed.error.message}`);
 }
 

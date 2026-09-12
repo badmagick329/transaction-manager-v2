@@ -1,6 +1,6 @@
 import type { EconomicType, TransactionFilters } from "./types";
 
-export type WorkspacePage = "dashboard" | "classification" | "reconciliation" | "tags" | "recurring" | "transactions";
+export type WorkspacePage = "amazon-orders" | "dashboard" | "classification" | "reconciliation" | "tags" | "recurring" | "transactions";
 export type DashboardDatePreset = "since_2024" | "month" | "last_30_days" | "last_90_days" | "year_to_date" | "custom";
 export type TrendGranularity = "month" | "year";
 
@@ -42,7 +42,7 @@ export const emptyTransactionFilters: TransactionFilters = {
   untagged: false,
 };
 
-const pages: WorkspacePage[] = ["dashboard", "classification", "reconciliation", "tags", "recurring", "transactions"];
+const pages: WorkspacePage[] = ["amazon-orders", "dashboard", "classification", "reconciliation", "tags", "recurring", "transactions"];
 const datePresets: DashboardDatePreset[] = ["since_2024", "month", "last_30_days", "last_90_days", "year_to_date", "custom"];
 const economicTypes: Array<"all" | EconomicType> = ["all", "expense", "income", "transfer", "unclassified"];
 const transactionTypes = ["purchase", "direct_debit", "transfer", "funding", "withdrawal", "card_payment", "refund", "fee", "cashback", "interest", "dividend", "adjustment", "unclassified"];

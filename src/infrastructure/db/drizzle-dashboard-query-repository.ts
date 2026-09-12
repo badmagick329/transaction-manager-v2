@@ -18,7 +18,7 @@ import { exclusiveEndDate } from "../../app/date-range";
 import { recurringOverview } from "../../app/recurring-payments";
 import { DrizzleRecurringPaymentRepository } from "./drizzle-recurring-payment-repository";
 import type { AppDatabase } from "./client";
-import { accountCoveragePeriods, accounts, cashFlowExclusions, importBatches, rawRecords, sources, tagRules, tags, transactionLinks, transactionManualTags, transactionTagRuleMatches, transactions } from "./schema";
+import { amazonLinks, accountCoveragePeriods, accounts, cashFlowExclusions, importBatches, rawRecords, sources, tagRules, tags, transactionLinks, transactionManualTags, transactionTagRuleMatches, transactions } from "./schema";
 
 function periodsInRange(startDate: string, endDate: string, granularity: "month" | "year") {
   const startYear = Number(startDate.slice(0, 4));
@@ -135,6 +135,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
     const transactionRows = options?.limit ? await orderedQuery.limit(options.limit).offset(options.offset ?? 0) : await orderedQuery;
     if (transactionRows.length === 0) return [];
     const transactionIds = transactionRows.map(transaction => transaction.id);
+    const amazonMatches = await this.db.select({ transactionId: amazonLinks.transactionId, orderId: amazonLinks.orderId }).from(amazonLinks).where(and(inArray(amazonLinks.transactionId, transactionIds), eq(amazonLinks.status, "confirmed")));
     const [links, exclusions, manualTagRows, automaticTagRows, recurringSnapshot] = await Promise.all([
       this.db.select().from(transactionLinks).where(and(
         eq(transactionLinks.linkType, "funds"),
@@ -178,7 +179,7 @@ export class DrizzleDashboardQueryRepository implements DashboardQueryRepository
         ? fromLink.status === "confirmed" ? "Linked to PayPal purchase" : "PayPal match pending"
         : toLink ? toLink.status === "confirmed" ? "HSBC funding matched" : "HSBC match pending" : null;
       const transactionTags = [...(tagsByTransaction.get(transaction.id)?.values() ?? [])].sort((left, right) => left.name.localeCompare(right.name));
-      return { ...transaction, recurringPayment: recurringByTransaction.get(transaction.id) ?? null, reconciliationLabel, isExcludedFromCashFlow: excludedTransactionIds.has(transaction.id), tags: transactionTags };
+      return { ...transaction, amazonOrderCount: new Set(amazonMatches.filter(l => l.transactionId === transaction.id).map(l => l.orderId)).size, recurringPayment: recurringByTransaction.get(transaction.id) ?? null, reconciliationLabel, isExcludedFromCashFlow: excludedTransactionIds.has(transaction.id), tags: transactionTags };
     });
   }
 

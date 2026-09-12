@@ -167,3 +167,17 @@ test("contains matches Netcup through changing FX descriptions without crossing 
   expect(recurringOverview(after).payments[0].needsReview).toBe(true);
   expect(recurringOverview(after).payments[0].transactions.map(t => t.id)).not.toContain(22);
 });
+
+
+test("six-month billing detects, matches and forecasts twice-yearly payments", () => {
+  const input = snapshot(["2025-01-12", "2025-07-12", "2026-01-12"]);
+  input.transactions.forEach(t => t.amountMinor = -155995);
+  expect(recurringOverview(input).suggestions[0].frequency).toBe("semiannual");
+  input.payments = [{ ...payment, frequency: "semiannual", anchorDate: "2025-01-12", amountMinor: 155995 }];
+  const result = recurringOverview(input, "2026-01-13").payments[0];
+  expect(result.transactions).toHaveLength(3);
+  expect(result.nextDate).toBe("2026-07-12");
+  expect(result.monthlyEquivalentMinor).toBe(25999);
+  expect(scheduledDate("2024-08-31", "semiannual", 1)).toBe("2025-02-28");
+  expect(scheduledDate("2024-08-31", "semiannual", 2)).toBe("2025-08-31");
+});

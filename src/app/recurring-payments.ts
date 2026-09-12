@@ -1,4 +1,5 @@
-export const frequencies = ["weekly", "monthly", "quarterly", "annual"] as const;
+export const frequencies = ["weekly", "monthly", "quarterly", "semiannual", "annual"] as const;
+export const frequencyLabels = { weekly: "Weekly", monthly: "Monthly", quarterly: "Quarterly · every 3 months", semiannual: "Every 6 months", annual: "Annual" };
 export type Frequency = typeof frequencies[number];
 export type RecurringMatchMode = "exact" | "starts_with" | "contains";
 export type RecurringPaymentInput = {
@@ -35,7 +36,7 @@ export function scheduledDate(anchor: string, frequency: Frequency, cycle: numbe
   const date = new Date(dateValue(anchor));
   if (frequency === "weekly") date.setUTCDate(date.getUTCDate() + cycle * 7);
   else {
-    const months = frequency === "monthly" ? 1 : frequency === "quarterly" ? 3 : 12;
+    const months = frequency === "monthly" ? 1 : frequency === "quarterly" ? 3 : frequency === "semiannual" ? 6 : 12;
     const originalDay = date.getUTCDate();
     const endOfMonth = originalDay === new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)).getUTCDate();
     date.setUTCDate(1);
@@ -48,7 +49,7 @@ export function scheduledDate(anchor: string, frequency: Frequency, cycle: numbe
 function cycleFor(anchor: string, frequency: Frequency, value: string) {
   if (frequency === "weekly") return Math.round((dateValue(value) - dateValue(anchor)) / day / 7);
   const a = new Date(dateValue(anchor)), b = new Date(dateValue(value));
-  const estimate = Math.round(((b.getUTCFullYear() - a.getUTCFullYear()) * 12 + b.getUTCMonth() - a.getUTCMonth()) / (frequency === "monthly" ? 1 : frequency === "quarterly" ? 3 : 12));
+  const estimate = Math.round(((b.getUTCFullYear() - a.getUTCFullYear()) * 12 + b.getUTCMonth() - a.getUTCMonth()) / (frequency === "monthly" ? 1 : frequency === "quarterly" ? 3 : frequency === "semiannual" ? 6 : 12));
   // Posting can cross into the next month, so choose the nearest billing date.
   return [estimate - 1, estimate, estimate + 1].sort((left, right) => Math.abs(dateValue(scheduledDate(anchor, frequency, left)) - dateValue(value)) - Math.abs(dateValue(scheduledDate(anchor, frequency, right)) - dateValue(value)))[0];
 }
@@ -128,7 +129,7 @@ export function recurringOverview(snapshot: RecurringSnapshot, today = new Date(
     }
     const expectedAmount = latest && latest.transactionDate.slice(0, 10) >= currentMethod.effectiveDate ? Math.abs(latest.amountMinor) : currentMethod.amountMinor;
     return { ...payment, methods: methodsFor(payment), currentMethod, transactions, nextDate: payment.status === "active" ? nextDate : null,
-      monthlyEquivalentMinor: Math.round(expectedAmount * ({ weekly: 52 / 12, monthly: 1, quarterly: 1 / 3, annual: 1 / 12 }[currentMethod.frequency])),
+      monthlyEquivalentMinor: Math.round(expectedAmount * ({ weekly: 52 / 12, monthly: 1, quarterly: 1 / 3, semiannual: 1 / 6, annual: 1 / 12 }[currentMethod.frequency])),
       priceChanged: !!latest && Math.abs(latest.amountMinor) !== methodAt(payment, latest.transactionDate).amountMinor,
       needsReview: candidates.length !== transactions.length || sorted.some(t => owners.get(t.id)!.includes(payment.id) && owners.get(t.id)!.length > 1),
       paymentMissing: payment.status === "active" && endDate < today && covered,

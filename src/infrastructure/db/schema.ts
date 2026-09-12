@@ -365,7 +365,7 @@ export const recurringPayments = sqliteTable("recurring_payments", {
   currencyCode: text("currency_code").notNull(),
   description: text("description").notNull(),
   amountMinor: integer("amount_minor").notNull(),
-  frequency: text("frequency", { enum: ["weekly", "monthly", "quarterly", "annual"] }).notNull(),
+  frequency: text("frequency", { enum: ["weekly", "monthly", "quarterly", "semiannual", "annual"] }).notNull(),
   anchorDate: text("anchor_date").notNull(),
   status: text("status", { enum: ["active", "paused", "cancelled", "dismissed"] }).notNull(),
 });
@@ -378,7 +378,7 @@ export const recurringPaymentLinks = sqliteTable("recurring_payment_links", {
 export const recurringPaymentMethods = sqliteTable("recurring_payment_methods", {
   matchMode: text("match_mode", { enum: ["exact", "starts_with", "contains"] }).notNull().default("exact"),
   anchorDate: text("anchor_date"),
-  frequency: text("frequency", { enum: ["weekly", "monthly", "quarterly", "annual"] }),
+  frequency: text("frequency", { enum: ["weekly", "monthly", "quarterly", "semiannual", "annual"] }),
   amountMinor: integer("amount_minor"),
   id: integer("id").primaryKey({ autoIncrement: true }),
   paymentId: integer("payment_id").notNull().references(() => recurringPayments.id),

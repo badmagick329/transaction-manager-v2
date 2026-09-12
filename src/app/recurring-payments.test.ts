@@ -125,3 +125,28 @@ test("prefix collisions remain ambiguous in the preview and explicit links resol
   expect(previewRecurringChange(input, input, 1).rows[0].outcome).toBe("Included");
   expect(recurringOverview(input).payments[1].transactions).toHaveLength(0);
 });
+
+
+test("Hetzner statement dates produce one monthly history, not twelve annual subscriptions", () => {
+  const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const input = snapshot(Array.from({ length: 24 }, (_, i) => `${2025 + Math.floor(i / 12)}-${String(i % 12 + 1).padStart(2, "0")}-14`));
+  input.transactions.forEach((t, i) => { t.description = `Hetzner Online GmbH Hetzner.Com/ DEU on 13 ${months[i % 12]}`; t.amountMinor = i < 12 ? -2324 : -1194; });
+  const suggestions = recurringOverview(input).suggestions;
+  expect(suggestions).toHaveLength(1);
+  expect(suggestions[0].frequency).toBe("monthly");
+  expect(suggestions[0].transactions).toHaveLength(24);
+});
+
+test("Netcup international references and FX rates retain the monthly series", () => {
+  const input = snapshot(["2026-01-27", "2026-02-27", "2026-03-27", "2026-04-27", "2026-05-27", "2026-06-29", "2026-07-27"]);
+  input.transactions.forEach((t, i) => { t.description = i < 4 ? `INT'L ${1000000 + i} NETCUP KARLSRUHE EUR 8.28 @ 1.${1400 + i} Visa Rate` : i === 4 ? "NETCUP" : "NETCUP - KARLSRUHE"; t.amountMinor = -719 - i; });
+  expect(recurringOverview(input).suggestions[0].transactions).toHaveLength(7);
+  expect(recurringOverview(input).suggestions[0].frequency).toBe("monthly");
+});
+
+test("account switches retain full detection evidence", () => {
+  const input = snapshot(["2026-01-04", "2026-02-04", "2026-03-04", "2026-04-04"]);
+  input.transactions[2].accountId = 2;
+  input.transactions[3].accountId = 2;
+  expect(recurringOverview(input).suggestions[0].transactions).toHaveLength(4);
+});

@@ -393,7 +393,14 @@ export const recurringReviewDecisions = sqliteTable("recurring_review_decisions"
   decision: text("decision", { mode: "json" }).$type<import("../../app/recurring-review").ReviewDecision>().notNull(),
 });
 
+export const recurringReviewReports = sqliteTable("recurring_review_reports", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  requestId: text("request_id").notNull().unique(),
+  report: text("report", { mode: "json" }).$type<import("../../app/recurring-review").ReviewReport>().notNull(),
+});
+
 export const schema = {
+  recurringReviewReports,
   recurringReviewDecisions,
   recurringPaymentMethods,
   recurringPaymentLinks,

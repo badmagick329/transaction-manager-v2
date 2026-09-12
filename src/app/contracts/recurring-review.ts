@@ -2,8 +2,8 @@ import { z } from "zod";
 import { frequencies, recurringDescription, type RecurringPaymentInput, type PaymentMethodChange } from "../recurring-payments";
 
 export type ReviewAction =
-  | { type: "create"; input: RecurringPaymentInput }
-  | { type: "update"; paymentId: number; input: RecurringPaymentInput }
+  | { type: "create"; input: RecurringPaymentInput; methods?: Omit<PaymentMethodChange, "paymentId">[]; transactionIds?: number[] }
+  | { type: "update"; paymentId: number; input: RecurringPaymentInput; methods?: Omit<PaymentMethodChange, "paymentId">[]; transactionIds?: number[] }
   | { type: "method"; input: PaymentMethodChange }
   | { type: "link"; paymentId: number; transactionId: number };
 export type ReviewDecisionInput = {
@@ -36,8 +36,8 @@ export const recurringMethodSchema = z.object({
   amountMinor: recurringInputSchema.shape.amountMinor.nullable(),
 });
 export const reviewActionSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("create"), input: recurringInputSchema.strict() }).strict(),
-  z.object({ type: z.literal("update"), paymentId: id, input: recurringInputSchema.strict() }).strict(),
+  z.object({ type: z.literal("create"), input: recurringInputSchema.strict(), methods: z.array(recurringMethodSchema.omit({ paymentId: true, previousEffectiveDate: true }).strict()).max(100).optional(), transactionIds: z.array(id).max(1000).refine(ids => new Set(ids).size === ids.length).optional() }).strict(),
+  z.object({ type: z.literal("update"), paymentId: id, input: recurringInputSchema.strict(), methods: z.array(recurringMethodSchema.omit({ paymentId: true, previousEffectiveDate: true }).strict()).max(100).optional(), transactionIds: z.array(id).max(1000).refine(ids => new Set(ids).size === ids.length).optional() }).strict(),
   z.object({ type: z.literal("method"), input: recurringMethodSchema.strict() }).strict(),
   z.object({ type: z.literal("link"), paymentId: id, transactionId: id }).strict(),
 ]) as z.ZodType<ReviewAction>;
@@ -52,3 +52,11 @@ export const reviewDecisionSchema = z.object({
 export const reviewResolutionSchema = z.object({
   decisionId: id, action: reviewActionSchema.optional(),
 }).strict();
+
+export const reviewReportSchema = z.object({
+  requestId: z.string().trim().min(1).max(100), evidenceVersion: z.string().length(64),
+  inspectedTransactionIds: z.array(id).max(100000).refine(ids => new Set(ids).size === ids.length),
+  unresolved: z.array(z.object({ transactionIds: z.array(id).min(1).max(1000), reason: z.string().trim().min(1).max(2000) }).strict()).max(1000),
+  summary: z.string().trim().min(1).max(4000),
+}).strict();
+export type ReviewReportInput = z.infer<typeof reviewReportSchema>;

@@ -20,6 +20,14 @@ export interface RecurringPaymentRepository {
 
 // Preserve distinguishing merchant text: broad reference stripping can merge unrelated purchases.
 export function recurringDescription(value: string) { return value.normalize("NFKC").trim().replace(/\s+/g, " ").toUpperCase(); }
+// Discovery removes statement formatting only; saved matching rules retain the original text.
+export function recurringMerchant(value: string) {
+  return recurringDescription(value)
+    .replace(/^INT['’]L\s+\d+\s+/, "")
+    .replace(/\s+(?:GBP|USD|EUR)\s+\d+(?:\.\d+)?\s+@\s+[\d.]+\s+VISA RATE$/, "")
+    .replace(/\s+ON\s+\d{1,2}\s+(?:JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC)(?:\s+\d{2,4})?$/, "")
+    .replace(/[^A-Z0-9]+/g, " ").trim();
+}
 const day = 86400000;
 const dateValue = (value: string) => new Date(`${value.slice(0, 10)}T00:00:00Z`).getTime();
 // Calculate from the original anchor so February and processing delays cannot drift later bills.
@@ -124,11 +132,17 @@ export function recurringOverview(snapshot: RecurringSnapshot, today = new Date(
     };
   });
   const groups = new Map<string, RecurringTransaction[]>();
+  // A shorter observed merchant name can explain a location suffix disappearing.
+  // This is only a discovery hint: exact saved matching still requires review across variants.
+  const observedNames = new Set(sorted.map(t => recurringMerchant(t.description)));
+
   for (const t of sorted) {
     if (snapshot.links.some(link => link.transactionId === t.id) || snapshot.payments.some(p => merchantAt(p, t))) continue;
-    const description = recurringDescription(t.description);
+    const normalized = recurringMerchant(t.description);
+    const words = normalized.split(" ");
+    const description = words.map((_, i) => words.slice(0, i + 1).join(" ")).find(name => name.length >= 5 && observedNames.has(name)) ?? normalized;
     if (!description || ["PAYPAL", "PAYPAL PAYMENT", "AMAZON", "APPLE.COM/BILL"].includes(description)) continue;
-    const key = JSON.stringify([t.accountId, t.currencyCode, description]);
+    const key = JSON.stringify([t.currencyCode, description]);
     groups.set(key, [...(groups.get(key) ?? []), t]);
   }
   const suggestions: Array<RecurringPaymentInput & { transactions: RecurringTransaction[]; reason: string; firstPaymentDate: string }> = [];
@@ -136,13 +150,13 @@ export function recurringOverview(snapshot: RecurringSnapshot, today = new Date(
     for (const frequency of frequencies) {
       const required = frequency === "annual" ? 2 : 3;
       if (group.length < required) continue;
-      const evidence = group.slice(-Math.max(required, 6));
+      const evidence = group;
       const first = evidence[0], latest = evidence.at(-1)!;
       const draft: RecurringPaymentInput = { matchMode: "exact", name: latest.description, description: latest.description, accountId: latest.accountId, currencyCode: latest.currencyCode, amountMinor: Math.abs(latest.amountMinor), frequency, anchorDate: first.transactionDate.slice(0, 10), kind: "subscription", status: "active" };
       if (!evidence.every((t, index) => cycleFor(draft.anchorDate, frequency, t.transactionDate) === index && onSchedule(draft, t))) continue;
       const amounts = evidence.map(t => Math.abs(t.amountMinor));
       const variable = Math.max(...amounts) !== Math.min(...amounts);
-      suggestions.push({ ...draft, firstPaymentDate: group[0].transactionDate.slice(0, 10), transactions: evidence, reason: `${evidence.length} payments on a ${frequency} schedule. ${variable ? "Amounts vary; check whether this is a bill or a price change." : "The amount is consistent."}` });
+      suggestions.push({ ...draft, firstPaymentDate: group[0].transactionDate.slice(0, 10), transactions: evidence, reason: `${evidence.length} payments suggest a ${frequency} schedule. ${new Set(evidence.map(t => JSON.stringify([t.accountId, recurringDescription(t.description)]))).size > 1 ? "Descriptions or accounts differ; review the complete history before setting up matching. " : ""}${variable ? "Amounts vary; check whether this is a bill or a price change." : "The amount is consistent."}` });
       break;
     }
   }

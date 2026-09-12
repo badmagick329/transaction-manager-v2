@@ -1,10 +1,10 @@
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, desc } from "drizzle-orm";
 import { alreadyReviewed, canonical, evidenceVersion, prepareReview, reviewItems, reviewPreviewToken, reviewSubjectVersion, ReviewConflict, trackingState, validateDecision, type RecurringReviewRepository, type ReviewDecision, type TrackingState } from "../../app/recurring-review";
 import { recurringOverview, type RecurringSnapshot } from "../../app/recurring-payments";
-import type { ReviewAction, ReviewDecisionInput } from "../../app/contracts/recurring-review";
+import type { ReviewAction, ReviewDecisionInput, ReviewReportInput } from "../../app/contracts/recurring-review";
 import type { AppDatabase } from "./client";
 import { DrizzleRecurringPaymentRepository } from "./drizzle-recurring-payment-repository";
-import { accounts, recurringPayments, recurringPaymentLinks, recurringPaymentMethods, recurringReviewDecisions } from "./schema";
+import { accounts, recurringPayments, recurringPaymentLinks, recurringPaymentMethods, recurringReviewDecisions, recurringReviewReports } from "./schema";
 
 // Review writes use immediate transactions: evidence cannot change between checking and committing.
 export class DrizzleRecurringReviewRepository implements RecurringReviewRepository {
@@ -21,6 +21,31 @@ export class DrizzleRecurringReviewRepository implements RecurringReviewReposito
     this.db.update(recurringReviewDecisions).set({ decision }).where(eq(recurringReviewDecisions.id, decision.id)).run();
     return decision;
   }
+  // Persist what the agent claims to have inspected without claiming unexamined rows were reviewed.
+  report(input: ReviewReportInput) {
+    return this.atomic(() => {
+      const prior = this.db.select().from(recurringReviewReports).where(eq(recurringReviewReports.requestId, input.requestId)).get();
+      if (prior) {
+        const { createdAt, eligibleCount, accounts: accountScope, ...request } = prior.report;
+        if (canonical(request) !== canonical(input)) throw new ReviewConflict("Report requestId reused with different content.");
+        return prior.report;
+      }
+      const snapshot = this.payments.snapshotSync();
+      if (input.evidenceVersion !== evidenceVersion(snapshot)) throw new ReviewConflict("Evidence changed. Refresh before reporting.");
+      const eligible = new Set(snapshot.transactions.map(t => t.id));
+      const inspected = new Set(input.inspectedTransactionIds);
+      if (input.inspectedTransactionIds.some(id => !eligible.has(id)) || input.unresolved.some(u => u.transactionIds.some(id => !inspected.has(id)))) throw new Error("Report IDs must be eligible; unresolved records must have been inspected.");
+      const report = { ...input, createdAt: new Date().toISOString(), eligibleCount: eligible.size,
+        accounts: this.db.select({ id: accounts.id, name: accounts.name }).from(accounts).all().map(a => {
+          const rows = snapshot.transactions.filter(t => t.accountId === a.id);
+          const examined = rows.filter(t => inspected.has(t.id)).sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
+          return { ...a, eligibleCount: rows.length, inspectedCount: examined.length, firstDate: examined[0]?.transactionDate ?? null, lastDate: examined.at(-1)?.transactionDate ?? null };
+        }),
+      };
+      this.db.insert(recurringReviewReports).values({ requestId: input.requestId, report }).run();
+      return report;
+    });
+  }
   queue() {
     return this.atomic(() => {
       const snapshot = this.payments.snapshotSync();
@@ -29,7 +54,17 @@ export class DrizzleRecurringReviewRepository implements RecurringReviewReposito
       const items = reviewItems(snapshot).map(item => ({ ...item, decisions: decisions.filter(d => d.itemId === item.id).map(d => ({ id: d.id, status: d.status, reasoning: d.request.reasoning })),
         alreadyReviewed: decisions.some(d => d.itemId === item.id && alreadyReviewed(d, snapshot)),
       }));
-      return { evidenceVersion: version, items, accounts: this.db.select({ id: accounts.id, name: accounts.name, currencyCode: accounts.currencyCode }).from(accounts).all(),
+      return { evidenceVersion: version, latestReport: this.db.select().from(recurringReviewReports).orderBy(desc(recurringReviewReports.id)).get()?.report ?? null, items, accounts: this.db.select({ id: accounts.id, name: accounts.name, currencyCode: accounts.currencyCode }).from(accounts).all(),
+        scope: {
+          description: "All posted, negative expenses included in cash flow. Availability is not proof that an agent inspected them.",
+          accounts: this.db.select({ id: accounts.id, name: accounts.name }).from(accounts).all().map(account => {
+            const rows = snapshot.transactions.filter(t => t.accountId === account.id).sort((a, b) => a.transactionDate.localeCompare(b.transactionDate));
+            return { ...account, transactionCount: rows.length, firstDate: rows[0]?.transactionDate ?? null, lastDate: rows.at(-1)?.transactionDate ?? null,
+              coverage: snapshot.coverage.filter(c => c.accountId === account.id) };
+          }),
+          transactionCount: snapshot.transactions.length,
+          withoutDecisionCount: snapshot.transactions.filter(t => !decisions.some(d => d.request.evidenceTransactionIds.includes(t.id))).length,
+        },
         ...recurringOverview(snapshot), transactions: snapshot.transactions, coverage: snapshot.coverage, links: snapshot.links,
         decisions: decisions.reverse(),
       };
@@ -37,7 +72,8 @@ export class DrizzleRecurringReviewRepository implements RecurringReviewReposito
   }
   private validateAccounts(action: ReviewAction) {
     if (action.type === "link") return;
-    if (!this.db.select().from(accounts).where(eq(accounts.id, action.input.accountId)).get()) throw new Error("Account not found.");
+    const ids = [action.input.accountId, ...((action.type === "create" || action.type === "update") ? (action.methods ?? []).map(m => m.accountId) : [])];
+    if (ids.some(id => !this.db.select().from(accounts).where(eq(accounts.id, id)).get())) throw new Error("Account not found.");
   }
   assess(input: ReviewDecisionInput) {
     return this.atomic(() => {
@@ -55,6 +91,7 @@ export class DrizzleRecurringReviewRepository implements RecurringReviewReposito
       }
       const snapshot = this.payments.snapshotSync();
       if (this.all().some(d => d.itemId === input.itemId && alreadyReviewed(d, snapshot))) throw new ReviewConflict("This item already has a review decision for its current evidence. Leave it for the user.");
+      if (input.itemId.startsWith("discovery:") && this.all().some(d => d.request.evidenceTransactionIds.includes(Number(input.itemId.slice(10))) && alreadyReviewed(d, snapshot))) throw new ReviewConflict("This discovery evidence already has a review decision. Review the existing proposal or payment.");
       this.validateAccounts(input.action);
       const checked = validateDecision(snapshot, input);
       const decision: ReviewDecision = {
@@ -110,10 +147,17 @@ export class DrizzleRecurringReviewRepository implements RecurringReviewReposito
   }
   private apply(decision: ReviewDecision, action: ReviewAction, by: "agent" | "human", snapshot: RecurringSnapshot) {
     let paymentId: number;
-    if (action.type === "create") paymentId = this.payments.saveSync(action.input).id;
+    if (action.type === "create") {
+      paymentId = this.payments.saveSync(action.input).id;
+
+    }
     else if (action.type === "update") { paymentId = action.paymentId; this.payments.saveSync(action.input, paymentId); }
     else if (action.type === "method") { paymentId = action.input.paymentId; this.payments.changeMethodSync(action.input); }
     else { paymentId = action.paymentId; this.payments.linkSync(action.transactionId, paymentId); }
+    if (action.type === "create" || action.type === "update") {
+      for (const method of action.methods ?? []) this.payments.changeMethodSync({ ...method, paymentId });
+      for (const id of action.transactionIds ?? []) this.payments.linkSync(id, paymentId);
+    }
     const ids = new Set([paymentId]);
     if (action.type === "link") {
       const previous = recurringOverview(snapshot).payments.find(p => p.id !== paymentId && p.transactions.some(t => t.id === action.transactionId));

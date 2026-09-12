@@ -238,3 +238,72 @@ test("an existing payment's status or matching edits stay pending and dismissal 
   expect(later.items.find(i => i.id === `payment:${payment.id}`)?.alreadyReviewed).toBe(false);
   expect(f.repository.submit({ ...proposal.request, requestId: "later-change", evidenceVersion: later.evidenceVersion, disposition: "propose" }).status).toBe("pending");
 });
+
+
+test("discovery creates one reviewed ChatGPT history across accounts and descriptions, with undo", () => {
+  const f = fixture();
+  const second = f.db.insert(accounts).values({ sourceId: f.source.id, name: "Other card", kind: "bank_account", currencyCode: "GBP" }).returning().get();
+  f.db.update(transactions).set({ description: "INT'L 123 OPENAI CHATGPT USD 24.00 @ 1.33 Visa Rate" }).where(eq(transactions.id, f.rows[0].id)).run();
+  f.db.update(transactions).set({ description: "ChatGPT Subscription", accountId: second.id }).where(eq(transactions.id, f.rows[1].id)).run();
+  f.db.update(transactions).set({ description: "Openai *Chatgpt Subscr, Openai.com", accountId: second.id }).where(eq(transactions.id, f.rows[2].id)).run();
+  const q = f.repository.queue();
+  expect(q.suggestions).toHaveLength(0);
+  const input: ReviewDecisionInput = { requestId: crypto.randomUUID(), itemId: `discovery:${f.rows[0].id}`, evidenceVersion: q.evidenceVersion, disposition: "apply", reasoning: "Monthly ChatGPT history with description and account changes; explicit historical evidence reviewed together.", evidenceTransactionIds: f.rows.map(t => t.id), action: { type: "create", input: { name: "ChatGPT", kind: "subscription", accountId: f.account.id, currencyCode: "GBP", description: "INT'L 123 OPENAI CHATGPT USD 24.00 @ 1.33 VISA RATE", matchMode: "exact", amountMinor: 999, frequency: "monthly", anchorDate: "2026-01-01", status: "active" }, methods: [{ accountId: second.id, description: "OPENAI *CHATGPT SUBSCR, OPENAI.COM", matchMode: "exact", effectiveDate: "2026-03-01", anchorDate: null, frequency: null, amountMinor: null }], transactionIds: f.rows.map(t => t.id) } };
+  const decision = f.repository.submit(input);
+  expect(decision.status).toBe("pending");
+  const preview = f.repository.preview(decision.id);
+  expect(preview.preview.matching.rows.filter(t => t.outcome === "Included")).toHaveLength(3);
+  f.repository.approve(decision.id, preview.evidenceVersion, preview.previewToken);
+  expect(f.payments.snapshotSync().methods).toHaveLength(1);
+  expect(f.payments.snapshotSync().links).toHaveLength(3);
+  f.repository.undo(decision.id);
+  expect(f.payments.snapshotSync().payments).toHaveLength(0);
+  expect(f.payments.snapshotSync().links).toHaveLength(0);
+});
+
+test("cross-account detected history cannot be automatically reduced to the latest account", () => {
+  const f = fixture();
+  const second = f.db.insert(accounts).values({ sourceId: f.source.id, name: "Other", kind: "bank_account", currencyCode: "GBP" }).returning().get();
+  f.db.update(transactions).set({ accountId: second.id }).where(eq(transactions.id, f.rows[2].id)).run();
+  const result = f.repository.submit(f.decision());
+  expect(result.status).toBe("pending");
+  expect(result.automaticBlockers).toContain("Some supporting history is not included by this setup.");
+});
+
+
+test("inspection reports persist partial scope and unresolved cases without claiming a full audit", () => {
+  const f = fixture();
+  const input = { requestId: "partial-report", evidenceVersion: f.repository.queue().evidenceVersion, inspectedTransactionIds: [f.rows[0].id], unresolved: [{ transactionIds: [f.rows[0].id], reason: "Need the older statements." }], summary: "Only the first transaction was inspected." };
+  const report = f.repository.report(input);
+  expect(report.accounts[0]).toMatchObject({ inspectedCount: 1, eligibleCount: 3 });
+  expect(f.repository.report(input)).toEqual(report);
+  expect(new DrizzleRecurringReviewRepository(f.db).queue().latestReport).toEqual(report);
+  expect(() => f.repository.report({ ...input, summary: "Different" })).toThrow("requestId");
+  expect(() => f.repository.report({ ...input, requestId: "bad", unresolved: [{ transactionIds: [f.rows[1].id], reason: "Not inspected" }] })).toThrow("inspected");
+  expect(() => f.repository.report({ ...input, requestId: "stale", evidenceVersion: "0".repeat(64) })).toThrow("Evidence changed");
+});
+
+test("complete existing-payment history edits need approval and undo together", () => {
+  const f = fixture();
+  const created = f.repository.submit(f.decision());
+  const payment = f.payments.snapshotSync().payments[0];
+  const q = f.repository.queue();
+  const input: ReviewDecisionInput = { requestId: crypto.randomUUID(), itemId: `payment:${payment.id}`, evidenceVersion: q.evidenceVersion, disposition: "apply", reasoning: "Record dated billing changes and explicit historical evidence together.", evidenceTransactionIds: f.rows.map(t => t.id), action: { type: "update", paymentId: payment.id, input: payment, methods: [{ accountId: f.account.id, description: payment.description, matchMode: "exact", effectiveDate: "2026-02-01", anchorDate: null, frequency: null, amountMinor: 1099 }], transactionIds: [f.rows[0].id] } };
+  const result = f.repository.submit(input);
+  expect(result.status).toBe("pending");
+  const preview = f.repository.preview(result.id);
+  f.repository.approve(result.id, preview.evidenceVersion, preview.previewToken);
+  expect(f.payments.snapshotSync().methods).toHaveLength(1);
+  f.repository.undo(result.id);
+  expect(f.payments.snapshotSync().methods).toHaveLength(0);
+  expect(f.payments.snapshotSync().links).toHaveLength(0);
+  expect(f.payments.snapshotSync().payments).toHaveLength(1);
+});
+
+test("related merchant charges remain visible and block fragmentary automatic creation", () => {
+  const f = fixture();
+  f.db.insert(transactions).values({ sourceId: f.source.id, accountId: f.account.id, transactionDate: "2026-03-10", description: "EXTRA STREAMING SERVICE", amountMinor: -7284, currencyCode: "GBP", transactionType: "purchase", economicType: "expense" }).run();
+  const result = f.repository.submit(f.decision());
+  expect(result.status).toBe("pending");
+  expect(result.preview.relatedUnmatched).toHaveLength(1);
+});

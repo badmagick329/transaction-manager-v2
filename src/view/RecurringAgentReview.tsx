@@ -4,12 +4,12 @@ import { Input } from "../components/ui/input";
 import { EditorDialog } from "../components/ui/editor-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import type { ReviewAction } from "../app/contracts/recurring-review";
-import type { ReviewDecision, ReviewPreview } from "../app/recurring-review";
+import type { ReviewDecision, ReviewPreview, ReviewReport } from "../app/recurring-review";
 import type { RecurringPayment, RecurringTransaction } from "../app/recurring-payments";
 import type { Account } from "./types";
 import { formatMoney, titleCase } from "./formatters";
 
-type Queue = { decisions: ReviewDecision[]; payments: RecurringPayment[]; transactions: RecurringTransaction[] };
+type Queue = { evidenceVersion: string; latestReport: ReviewReport | null; scope: { transactionCount: number; withoutDecisionCount: number; accounts: { id: number; name: string; transactionCount: number; firstDate: string | null; lastDate: string | null }[] }; decisions: ReviewDecision[]; payments: RecurringPayment[]; transactions: RecurringTransaction[] };
 type Selection = { decision: ReviewDecision; action: ReviewAction };
 async function request(path: string, body?: unknown) {
   const response = await fetch(path, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -71,19 +71,30 @@ export function RecurringAgentReview({ accounts, refreshKey, onChanged }: { acco
   return <section aria-label="Agent reviews" className="space-y-3 rounded-xl border border-neutral-800 p-4">
     <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-medium">Agent reviews{queue ? ` (${pending.length})` : ""}</h3><Button variant="ghost" disabled={busy} onClick={() => void refresh()}>Refresh</Button></div>
     <p className="text-sm text-neutral-400">Clear new payments can be tracked automatically. Changes to existing payments need your approval.</p>
+    {queue && (queue.latestReport ? <details className="text-sm"><summary className="cursor-pointer">Last agent inspection: {queue.latestReport.inspectedTransactionIds.length} of {queue.latestReport.eligibleCount} expenses · {new Date(queue.latestReport.createdAt).toLocaleString()}</summary>
+      {queue.latestReport.evidenceVersion !== queue.evidenceVersion && <p className="text-amber-300">Records changed since this report.</p>}
+      <p>{queue.latestReport.summary}</p><p className="text-neutral-400">Inspection scope is reported by the agent.</p>
+      {queue.latestReport.accounts.map(a => <p key={a.id}>{a.name}: {a.inspectedCount} / {a.eligibleCount} inspected · {a.firstDate?.slice(0, 10) ?? "None"} – {a.lastDate?.slice(0, 10) ?? "None"}</p>)}
+      {queue.latestReport.unresolved.map((u, i) => <div key={i} className="mt-2 text-amber-300"><p>{u.reason}</p>{u.transactionIds.map(id => { const t = queue.transactions.find(t => t.id === id); return <p key={id}>{t ? `${t.transactionDate.slice(0, 10)} · ${t.description}` : `Transaction ${id} no longer eligible`}</p>; })}</div>)}
+    </details> : <p className="text-sm text-neutral-400">No agent inspection report recorded yet.</p>)}
+    {queue && <details className="text-sm text-neutral-400"><summary className="cursor-pointer">Available history: {queue.scope.transactionCount} expenses across {queue.scope.accounts.length} accounts</summary>
+      <p>Available to the agent; this does not mean every transaction has been reviewed. {queue.scope.withoutDecisionCount} expenses have no recorded decision.</p>
+      {queue.scope.accounts.map(a => <p key={a.id}>{a.name}: {a.transactionCount} expenses · {a.firstDate?.slice(0, 10) ?? "No history"} – {a.lastDate?.slice(0, 10) ?? "No history"}</p>)}
+    </details>}
     {error && !selected && <p role="alert" className="text-sm text-red-400">{error}</p>}
     {notice && <p role="status" className="text-sm text-emerald-300">{notice}</p>}
     {!queue ? <p className="text-sm text-neutral-400">Loading agent reviewsâ€¦</p> : pending.length === 0 ? <p className="text-sm text-neutral-400">No proposals waiting for review.</p> : pending.map(d => <article key={d.id} className="space-y-2 rounded-lg border border-neutral-700 p-3">
       <h4 className="font-medium">{d.name} Â· {actionName(d.request.action)}</h4>
       <p className="whitespace-pre-wrap text-sm">{d.request.reasoning}</p>
       {d.status === "outdated" && <p className="text-sm text-amber-300">Records changed since this proposal. Preview the current effect before accepting.</p>}
-      <Evidence decision={d} />
+      <Evidence decision={d} accounts={accounts} />
+      <details><summary className="cursor-pointer text-sm text-neutral-400">Proposed setup and omitted charges</summary><Preview value={d.preview} accounts={accounts} /></details>
       <div className="flex gap-2"><Button variant="outline" disabled={busy} onClick={() => open(d)}>Review / edit</Button><Button variant="ghost" disabled={busy} onClick={() => void resolve("dismiss", d)}>Dismiss</Button></div>
     </article>)}
     <details><summary className="cursor-pointer text-sm text-neutral-400">Change history ({history.length})</summary><div className="mt-3 space-y-3">{history.map(d => <article key={d.id} className="space-y-2 rounded-lg border border-neutral-800 p-3 text-sm">
       <p>{d.name} Â· {titleCase(d.status)}{d.appliedBy ? ` Â· ${d.appliedBy === "agent" ? "Automatically applied" : "Approved by you"}` : ""}</p>
       <p className="text-neutral-400">{new Date(d.resolvedAt ?? d.createdAt).toLocaleString()}</p><p className="whitespace-pre-wrap">{d.request.reasoning}</p>
-      <Evidence decision={d} />
+      <Evidence decision={d} accounts={accounts} />
       <details><summary className="cursor-pointer text-neutral-400">Recorded changes</summary><Preview value={d.preview} accounts={accounts} /></details>
       {d.status === "applied" && <Button variant="outline" disabled={busy} onClick={() => void resolve("undo", d)}>Undo change</Button>}
     </article>)}</div></details>
@@ -91,7 +102,7 @@ export function RecurringAgentReview({ accounts, refreshKey, onChanged }: { acco
       <p className="whitespace-pre-wrap text-sm">{selected.decision.request.reasoning}</p>
       {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
       <fieldset disabled={busy}><ActionEditor action={selected.action} accounts={accounts} payments={queue?.payments ?? []} transactions={queue?.transactions ?? []} onChange={action => { setSelected({ ...selected, action }); setPreview(null); }} /></fieldset>
-      <Evidence decision={selected.decision} />
+      <Evidence decision={selected.decision} accounts={accounts} />
       {preview && <Preview value={preview.preview} accounts={accounts} />}
       <div className="flex gap-2"><Button disabled={busy}>{busy ? "Workingâ€¦" : preview ? "Accept proposal" : "Preview changes"}</Button><Button type="button" variant="ghost" disabled={busy} onClick={() => { setSelected(null); setError(""); }}>Cancel</Button></div>
     </form></EditorDialog>}
@@ -99,9 +110,9 @@ export function RecurringAgentReview({ accounts, refreshKey, onChanged }: { acco
 }
 
 function actionName(action: ReviewAction) {
-  return ({ create: "Track new payment", update: "Edit payment details", method: "Update billing or matching", link: "Attach transaction" })[action.type];
+  return ({ create: "Track new payment", update: "Update payment and history", method: "Update billing or matching", link: "Attach transaction" })[action.type];
 }
-function Evidence({ decision }: { decision: ReviewDecision }) {
+function Evidence({ decision, accounts }: { decision: ReviewDecision; accounts: Account[] }) {
   return <details className="text-sm"><summary className="cursor-pointer text-neutral-400">Supporting transactions ({decision.evidence.length})</summary><div className="mt-2 max-h-52 space-y-1 overflow-auto">{decision.evidence.map(t => <p key={t.id}>{t.transactionDate.slice(0, 10)} Â· {t.description} Â· {formatMoney(Math.abs(t.amountMinor), t.currencyCode)}</p>)}</div></details>;
 }
 function Preview({ value, accounts }: { value: ReviewPreview; accounts: Account[] }) {
@@ -111,6 +122,7 @@ function Preview({ value, accounts }: { value: ReviewPreview; accounts: Account[
     <table className="w-full text-left"><thead><tr><th>Field</th><th>Before</th><th>After</th></tr></thead><tbody>{Object.keys(labels).filter(k => !value.before || value.before[k] !== value.after[k]).map(k => <tr key={k}><td className="py-1 pr-3">{labels[k]}</td><td className="pr-3">{value.before ? describe(k, value.before[k]) : "Not tracked"}</td><td>{describe(k, value.after[k])}</td></tr>)}</tbody></table>
     {JSON.stringify(value.methodsBefore) !== JSON.stringify(value.methodsAfter) && <div className="grid gap-3 sm:grid-cols-2">{[["Billing before", value.methodsBefore], ["Billing after", value.methodsAfter]].map(([title, methods]) => <div key={title as string}><p className="font-medium">{title as string}</p>{(methods as ReviewPreview["methodsBefore"]).length === 0 ? <p>Original billing settings</p> : (methods as ReviewPreview["methodsBefore"]).map(m => <p key={m.effectiveDate} className="mt-1">From {m.effectiveDate} Â· {describe("accountId", m.accountId)} Â· {m.description} Â· {m.matchMode === "exact" ? "Exact" : "Starts with"} Â· {m.amountMinor === null ? "Inherit amount" : describe("amountMinor", m.amountMinor)} Â· {m.frequency ?? "Inherit frequency"} Â· {m.anchorDate ?? "Inherit billing date"}</p>)}</div>)}</div>}
     {value.reassignedFrom !== null && <p className="text-amber-300">This transaction will move from {value.reassignedFromName}.</p>}
+    {(value.relatedUnmatched?.length ?? 0) > 0 && <details className="text-amber-300"><summary>Possibly related charges left out ({value.relatedUnmatched!.length})</summary><p>Similar description text; these may be separate services. They are not attached.</p>{value.relatedUnmatched!.map(t => <p key={t.id}>{t.transactionDate.slice(0, 10)} · {accounts.find(a => a.id === t.accountId)?.name} · {t.description} · {formatMoney(Math.abs(t.amountMinor), t.currencyCode)}</p>)}</details>}
     <p>Next expected: {value.matching.nextDate ?? "Schedule paused"}</p>
     <div className="max-h-60 space-y-2 overflow-auto">{value.matching.rows.length === 0 ? <p>No matching transactions.</p> : value.matching.rows.map(t => <p key={t.id}>{t.transactionDate.slice(0, 10)} Â· {t.description} Â· {formatMoney(Math.abs(t.amountMinor), t.currencyCode)} Â· <span className={t.outcome === "Included" ? "text-emerald-400" : "text-amber-300"}>{t.outcome}</span></p>)}</div>
   </div>;
@@ -124,11 +136,19 @@ function ActionEditor({ action, accounts, payments, transactions, onChange }: { 
     const payment = payments.find(p => p.id === action.paymentId);
     return <div className="space-y-2"><p className="text-sm">Attach an eligible expense to {payment?.name ?? "the selected payment"}.</p><Choice label="Transaction" value={String(action.transactionId)} options={transactions.filter(t => t.currencyCode === payment?.currencyCode).map(t => [String(t.id), `${t.transactionDate.slice(0, 10)} Â· ${t.description} Â· ${formatMoney(Math.abs(t.amountMinor), t.currencyCode)} Â· ${accounts.find(a => a.id === t.accountId)?.name}`])} onChange={id => onChange({ ...action, transactionId: Number(id) })} /></div>;
   }
+  const history = (action.type === "create" || action.type === "update") ? <div className="space-y-3 sm:col-span-2">
+    {(action.methods ?? []).map((m, index) => <fieldset key={index} className="rounded border border-neutral-700 p-3"><legend>Billing change {index + 1}</legend><ActionEditor action={{ type: "method", input: { ...m, paymentId: -1 } }} accounts={accounts} payments={payments} transactions={transactions} onChange={edited => {
+      if (edited.type !== "method") return;
+      const { paymentId, ...method } = edited.input;
+      onChange({ ...action, methods: action.methods!.map((v, i) => i === index ? method : v) });
+    }} /><Button type="button" variant="ghost" onClick={() => onChange({ ...action, methods: action.methods!.filter((_, i) => i !== index) })}>Remove billing change</Button></fieldset>)}
+    {(action.transactionIds ?? []).length > 0 && <details><summary>Explicit history ({action.transactionIds!.length})</summary>{action.transactionIds!.map(id => { const t = transactions.find(t => t.id === id); return <p key={id}>{t?.transactionDate.slice(0, 10)} · {t?.description} · {accounts.find(a => a.id === t?.accountId)?.name} <Button type="button" variant="ghost" onClick={() => onChange({ ...action, transactionIds: action.transactionIds!.filter(v => v !== id) })}>Remove</Button></p>; })}</details>}
+  </div> : null;
   const input = action.input;
   const change = (patch: Record<string, unknown>) => onChange({ ...action, input: { ...input, ...patch } } as ReviewAction);
   const method = action.type === "method";
   const currency = action.type === "method" ? payments.find(p => p.id === action.input.paymentId)?.currencyCode ?? "GBP" : action.input.currencyCode;
-  return <div className="grid gap-3 sm:grid-cols-2">
+  return <div className="grid gap-3 sm:grid-cols-2">{history}
     {action.type !== "method" && <><label className="text-sm">Name<Input required maxLength={200} value={action.input.name} onChange={e => change({ name: e.target.value })} /></label><Choice label="Kind" value={action.input.kind} options={["subscription", "bill", "instalment"].map(v => [v, titleCase(v)])} onChange={kind => change({ kind })} /></>}
     {action.type === "method" && <label className="text-sm">Effective date<Input type="date" required value={action.input.effectiveDate} onChange={e => change({ effectiveDate: e.target.value })} /></label>}
     {action.type !== "update" && <>

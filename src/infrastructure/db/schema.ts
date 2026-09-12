@@ -375,6 +375,13 @@ export const recurringPaymentLinks = sqliteTable("recurring_payment_links", {
   paymentId: integer("payment_id").notNull().references(() => recurringPayments.id),
 });
 
+export const recurringTransactionDecisions = sqliteTable("recurring_transaction_decisions", {
+  paymentId: integer("payment_id").notNull().references(() => recurringPayments.id),
+  transactionId: integer("transaction_id").notNull().references(() => transactions.id),
+  oneOff: integer("one_off", { mode: "boolean" }).notNull().default(false),
+  priceWarningDismissed: integer("price_warning_dismissed", { mode: "boolean" }).notNull().default(false),
+}, table => ({ paymentTransactionUnique: uniqueIndex("recurring_decisions_payment_transaction_unique").on(table.paymentId, table.transactionId) }));
+
 export const recurringPaymentMethods = sqliteTable("recurring_payment_methods", {
   matchMode: text("match_mode", { enum: ["exact", "starts_with", "contains"] }).notNull().default("exact"),
   anchorDate: text("anchor_date"),
@@ -403,6 +410,7 @@ export const schema = {
   recurringReviewReports,
   recurringReviewDecisions,
   recurringPaymentMethods,
+  recurringTransactionDecisions,
   recurringPaymentLinks,
   recurringPayments,
   sources,

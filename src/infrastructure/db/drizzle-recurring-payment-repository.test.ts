@@ -74,3 +74,33 @@ test("migration, persistence, exclusion changes, linking, and route validation",
   expect((await change({ ...method, description: " " })).status).toBe(400);
   db.$client.close();
 });
+
+
+test("transaction decisions persist, validate ownership, and can be reversed through the API", async () => {
+  const db = createDb(join(mkdtempSync(join(tmpdir(), "recurring-decisions-")), "app.db"));
+  migrate(db, { migrationsFolder: "drizzle" });
+  try {
+    const source = db.insert(sources).values({ slug: "test", name: "Test", kind: "bank" }).returning().get();
+    const account = db.insert(accounts).values({ sourceId: source.id, name: "Current", kind: "bank_account", currencyCode: "GBP" }).returning().get();
+    const charge = db.insert(transactions).values({ sourceId: source.id, accountId: account.id, transactionDate: "2026-04-01", description: "GYM", amountMinor: -4146, currencyCode: "GBP", transactionType: "purchase", economicType: "expense" }).returning().get();
+    const repository = new DrizzleRecurringPaymentRepository(db);
+    const payment = await repository.save({ name: "Gym", kind: "subscription", accountId: account.id, currencyCode: "GBP", description: "GYM", matchMode: "exact", amountMinor: 2899, frequency: "monthly", anchorDate: "2026-04-01", status: "active" });
+    const route = createRecurringRoutes(repository)["/api/recurring-payments/transaction-decision"];
+    const post = (body: unknown) => route.POST(new Request("http://localhost/api/recurring-payments/transaction-decision", { method: "POST", body: JSON.stringify(body) }));
+    const decision = { paymentId: payment.id, transactionId: charge.id, oneOff: false, priceWarningDismissed: true };
+    expect((await post({ ...decision, oneOff: "yes" })).status).toBe(400);
+    expect((await post({ ...decision, paymentId: 999 })).status).toBe(400);
+    expect((await post({ ...decision, transactionId: 999 })).status).toBe(400);
+    expect((await post(decision)).status).toBe(200);
+    const reloaded = new DrizzleRecurringPaymentRepository(db);
+    expect((await reloaded.snapshot()).transactionDecisions).toEqual([decision]);
+    expect(recurringOverview(await reloaded.snapshot()).payments[0]).toMatchObject({ priceChanged: false, nextDate: "2026-05-01" });
+    expect((await post({ ...decision, oneOff: true, priceWarningDismissed: false })).status).toBe(200);
+    expect(recurringOverview(await reloaded.snapshot()).payments[0]).toMatchObject({ priceChanged: false, nextDate: "2026-04-01" });
+    expect((await reloaded.snapshot()).transactions[0].amountMinor).toBe(-4146);
+    expect((await post({ ...decision, priceWarningDismissed: false })).status).toBe(200);
+    expect(recurringOverview(await reloaded.snapshot()).payments[0]).toMatchObject({ priceChanged: true, nextDate: "2026-05-01" });
+    db.insert(cashFlowExclusions).values({ transactionId: charge.id }).run();
+    expect((await post(decision)).status).toBe(400);
+  } finally { db.$client.close(); }
+});

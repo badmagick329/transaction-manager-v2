@@ -6,6 +6,15 @@ const inputSchema = recurringInputSchema.extend({ id: z.number().int().positive(
 const methodSchema = recurringMethodSchema;
 export function createRecurringRoutes(repository: RecurringPaymentRepository) {
   return {
+    "/api/recurring-payments/transaction-decision": {
+      POST: async (request: Request) => {
+        try {
+          const input = z.object({ paymentId: z.number().int().positive(), transactionId: z.number().int().positive(), oneOff: z.boolean(), priceWarningDismissed: z.boolean() }).strict().parse(await request.json());
+          await repository.setTransactionDecision(input);
+          return Response.json({ ok: true });
+        } catch (error) { return Response.json({ error: error instanceof z.ZodError ? "Choose a payment, transaction, and valid decision." : error instanceof Error ? error.message : "Unable to save transaction decision." }, { status: 400 }); }
+      },
+    },
     "/api/recurring-payments/preview": {
       POST: async (request: Request) => {
         try {

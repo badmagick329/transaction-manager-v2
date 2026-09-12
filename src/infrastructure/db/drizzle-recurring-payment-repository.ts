@@ -1,7 +1,7 @@
 import { and, eq, isNull, lt } from "drizzle-orm";
-import { recurringDescription, type PaymentMethodChange, type RecurringPaymentInput, type RecurringPaymentRepository } from "../../app/recurring-payments";
+import { recurringOverview, type RecurringTransactionDecision, recurringDescription, type PaymentMethodChange, type RecurringPaymentInput, type RecurringPaymentRepository } from "../../app/recurring-payments";
 import type { AppDatabase } from "./client";
-import { accounts, accountCoveragePeriods, cashFlowExclusions, recurringPayments, recurringPaymentLinks, recurringPaymentMethods, transactions } from "./schema";
+import { accounts, accountCoveragePeriods, cashFlowExclusions, recurringPayments, recurringTransactionDecisions, recurringPaymentLinks, recurringPaymentMethods, transactions } from "./schema";
 
 // Keep user tracking decisions separate from immutable imported payment evidence.
 export class DrizzleRecurringPaymentRepository implements RecurringPaymentRepository {
@@ -18,7 +18,20 @@ export class DrizzleRecurringPaymentRepository implements RecurringPaymentReposi
       this.db.select().from(recurringPaymentLinks).all(),
       this.db.select().from(recurringPaymentMethods).all(),
     ];
-    return { payments, transactions: expenses, coverage, links, methods };
+    return { payments, transactions: expenses, coverage, links, methods, transactionDecisions: this.db.select().from(recurringTransactionDecisions).all() };
+  }
+  // Decisions belong to one payment and charge; imported amounts and future warnings stay untouched.
+  async setTransactionDecision(input: RecurringTransactionDecision) {
+    this.db.transaction(() => {
+      const payment = recurringOverview(this.snapshotSync()).payments.find(p => p.id === input.paymentId && p.status !== "dismissed");
+      if (!payment?.transactions.some(t => t.id === input.transactionId)) throw new Error("Choose a transaction attached to this recurring payment.");
+      if (!input.oneOff && !input.priceWarningDismissed) {
+        this.db.delete(recurringTransactionDecisions).where(and(eq(recurringTransactionDecisions.paymentId, input.paymentId), eq(recurringTransactionDecisions.transactionId, input.transactionId))).run();
+        return;
+      }
+      if (input.oneOff) this.linkSync(input.transactionId, input.paymentId);
+      this.db.insert(recurringTransactionDecisions).values(input).onConflictDoUpdate({ target: [recurringTransactionDecisions.paymentId, recurringTransactionDecisions.transactionId], set: input }).run();
+    });
   }
   async changeMethod(input: PaymentMethodChange) { this.changeMethodSync(input); }
   changeMethodSync(input: PaymentMethodChange) {

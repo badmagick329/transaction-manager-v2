@@ -23,7 +23,7 @@ export function reviewSubjectVersion(snapshot: RecurringSnapshot, itemId: string
   if (!state.payment) return hash(state);
   const methods = [state.payment, ...state.methods];
   const derived = recurringOverview(snapshot).payments.find(p => p.id === state.payment!.id)!;
-  return hash({ ...state,
+  return hash({ ...state, transactionDecisions: snapshot.transactionDecisions.filter(d => d.paymentId === state.payment!.id),
     issues: { priceChanged: derived.priceChanged, needsReview: derived.needsReview, paymentMissing: derived.paymentMissing, coverageUnknown: derived.coverageUnknown, matchedTransactions: derived.transactions.map(t => t.id) },
     transactions: snapshot.transactions.filter(t => t.currencyCode === state.payment!.currencyCode && (state.links.some(l => l.transactionId === t.id) || methods.some(m => {
       return m.accountId === t.accountId && matchesRecurringDescription(t.description, m.description, m.matchMode);

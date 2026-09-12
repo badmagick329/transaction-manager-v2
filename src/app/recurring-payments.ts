@@ -11,9 +11,11 @@ export type RecurringPaymentInput = {
 export type RecurringPayment = RecurringPaymentInput & { id: number };
 export type PaymentMethodChange = { paymentId: number; accountId: number; description: string; matchMode: RecurringMatchMode; effectiveDate: string; previousEffectiveDate?: string; anchorDate: string | null; frequency: Frequency | null; amountMinor: number | null };
 export type RecurringTransaction = { id: number; accountId: number; currencyCode: string; description: string; amountMinor: number; transactionDate: string };
-export type RecurringSnapshot = { payments: RecurringPayment[]; methods: PaymentMethodChange[]; transactions: RecurringTransaction[]; coverage: Array<{ accountId: number; startDate: string; endDate: string }>; links: Array<{ transactionId: number; paymentId: number }> };
+export type RecurringTransactionDecision = { paymentId: number; transactionId: number; oneOff: boolean; priceWarningDismissed: boolean };
+export type RecurringSnapshot = { transactionDecisions: RecurringTransactionDecision[]; payments: RecurringPayment[]; methods: PaymentMethodChange[]; transactions: RecurringTransaction[]; coverage: Array<{ accountId: number; startDate: string; endDate: string }>; links: Array<{ transactionId: number; paymentId: number }> };
 export interface RecurringPaymentRepository {
   snapshot(): Promise<RecurringSnapshot>;
+  setTransactionDecision(input: RecurringTransactionDecision): Promise<void>;
   save(input: RecurringPaymentInput, id?: number): Promise<RecurringPayment>;
   link(transactionId: number, paymentId: number): Promise<void>;
   changeMethod(input: PaymentMethodChange): Promise<void>;
@@ -104,17 +106,19 @@ export function recurringOverview(snapshot: RecurringSnapshot, today = new Date(
     owners.set(transaction.id, explicit ? [explicit.paymentId] : snapshot.payments.filter(p => p.status !== "dismissed" && merchantAt(p, transaction) && onSchedule(methodAt(p, transaction.transactionDate), transaction)).map(p => p.id));
   }
   const payments = snapshot.payments.map(payment => {
+    const transactionDecisions = snapshot.transactionDecisions.filter(d => d.paymentId === payment.id);
+    const isOneOff = (t: RecurringTransaction) => transactionDecisions.some(d => d.transactionId === t.id && d.oneOff);
     const candidates = sorted.filter(t => owners.get(t.id)?.length === 1 && owners.get(t.id)![0] === payment.id);
     // Multiple charges in one billing window are ambiguous and need user review.
     const billingKey = (t: RecurringTransaction) => { const m = methodAt(payment, t.transactionDate); return `${m.anchorDate}:${m.frequency}:${cycleFor(m.anchorDate, m.frequency, t.transactionDate)}`; };
     const counts = new Map<string, number>();
-    for (const t of candidates.filter(t => onSchedule(methodAt(payment, t.transactionDate), t))) { const key = billingKey(t); counts.set(key, (counts.get(key) ?? 0) + 1); }
-    const transactions = candidates.filter(t => snapshot.links.some(link => link.transactionId === t.id && link.paymentId === payment.id) || counts.get(billingKey(t)) === 1);
+    for (const t of candidates.filter(t => !isOneOff(t) && onSchedule(methodAt(payment, t.transactionDate), t))) { const key = billingKey(t); counts.set(key, (counts.get(key) ?? 0) + 1); }
+    const transactions = candidates.filter(t => isOneOff(t) || snapshot.links.some(link => link.transactionId === t.id && link.paymentId === payment.id) || counts.get(billingKey(t)) === 1);
     const latest = transactions.at(-1);
     const currentMethod = methodAt(payment, today);
     const forecastMethod = methodAt(payment, latest && latest.transactionDate.slice(0, 10) > today ? latest.transactionDate : today);
     // Attaching an irregular charge must not move the subscription's billing schedule.
-    const latestScheduled = transactions.filter(t => { const m = methodAt(payment, t.transactionDate); return m.anchorDate === forecastMethod.anchorDate && m.frequency === forecastMethod.frequency && onSchedule(m, t); }).at(-1);
+    const latestScheduled = transactions.filter(t => !isOneOff(t)).filter(t => { const m = methodAt(payment, t.transactionDate); return m.anchorDate === forecastMethod.anchorDate && m.frequency === forecastMethod.frequency && onSchedule(m, t); }).at(-1);
     let cycle = latestScheduled ? cycleFor(forecastMethod.anchorDate, forecastMethod.frequency, latestScheduled.transactionDate) + 1 : Math.max(0, cycleFor(forecastMethod.anchorDate, forecastMethod.frequency, forecastMethod.effectiveDate === "0001-01-01" ? forecastMethod.anchorDate : forecastMethod.effectiveDate));
     let nextDate = scheduledDate(forecastMethod.anchorDate, forecastMethod.frequency, cycle);
     if (!latestScheduled && nextDate < forecastMethod.effectiveDate) nextDate = scheduledDate(forecastMethod.anchorDate, forecastMethod.frequency, ++cycle);
@@ -127,10 +131,11 @@ export function recurringOverview(snapshot: RecurringSnapshot, today = new Date(
       const accountId = methodAt(payment, value).accountId;
       if (!snapshot.coverage.some(c => c.accountId === accountId && c.startDate <= value && c.endDate >= value)) covered = false;
     }
-    const expectedAmount = latest && latest.transactionDate.slice(0, 10) >= currentMethod.effectiveDate ? Math.abs(latest.amountMinor) : currentMethod.amountMinor;
-    return { ...payment, methods: methodsFor(payment), currentMethod, transactions, nextDate: payment.status === "active" ? nextDate : null,
+    // One-off adjustments and temporary discounts are history, not a new recurring commitment.
+    const expectedAmount = currentMethod.amountMinor;
+    return { ...payment, transactionDecisions, methods: methodsFor(payment), currentMethod, transactions, nextDate: payment.status === "active" ? nextDate : null,
       monthlyEquivalentMinor: Math.round(expectedAmount * ({ weekly: 52 / 12, monthly: 1, quarterly: 1 / 3, semiannual: 1 / 6, annual: 1 / 12 }[currentMethod.frequency])),
-      priceChanged: !!latest && Math.abs(latest.amountMinor) !== methodAt(payment, latest.transactionDate).amountMinor,
+      priceChanged: !!latest && !isOneOff(latest) && !transactionDecisions.some(d => d.transactionId === latest.id && d.priceWarningDismissed) && Math.abs(latest.amountMinor) !== methodAt(payment, latest.transactionDate).amountMinor,
       needsReview: candidates.length !== transactions.length || sorted.some(t => owners.get(t.id)!.includes(payment.id) && owners.get(t.id)!.length > 1),
       paymentMissing: payment.status === "active" && endDate < today && covered,
       coverageUnknown: payment.status === "active" && endDate < today && !covered,

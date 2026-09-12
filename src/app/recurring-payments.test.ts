@@ -3,7 +3,7 @@ import { recurringOverview, scheduledDate, previewRecurringChange, type Recurrin
 
 const payment: RecurringPayment = { matchMode: "exact", id: 1, name: "TV licence", description: "TV LICENCE", accountId: 1, currencyCode: "GBP", amountMinor: 4400, frequency: "quarterly", anchorDate: "2026-01-31", status: "active", kind: "bill" };
 function snapshot(dates: string[], payments: RecurringPayment[] = []): RecurringSnapshot {
-  return { payments, methods: [], coverage: [], links: [], transactions: dates.map((transactionDate, index) => ({ id: index + 1, accountId: 1, currencyCode: "GBP", description: "TV LICENCE", amountMinor: -4400, transactionDate })) };
+  return { transactionDecisions: [], payments, methods: [], coverage: [], links: [], transactions: dates.map((transactionDate, index) => ({ id: index + 1, accountId: 1, currencyCode: "GBP", description: "TV LICENCE", amountMinor: -4400, transactionDate })) };
 }
 test("quarterly detection uses calendar months and month-end billing", () => {
   const result = recurringOverview(snapshot(["2026-01-31", "2026-04-30", "2026-07-31"]));
@@ -29,7 +29,7 @@ test("manual entries match future payments, retain price changes, and suppress s
   input.transactions[2].amountMinor = -4600;
   const result = recurringOverview(input);
   expect(result.suggestions).toHaveLength(0);
-  expect(result.payments[0]).toMatchObject({ nextDate: "2026-10-31", priceChanged: true, monthlyEquivalentMinor: 1533 });
+  expect(result.payments[0]).toMatchObject({ nextDate: "2026-10-31", priceChanged: true, monthlyEquivalentMinor: 1467 });
   expect(result.payments[0].transactions).toHaveLength(3);
   input.payments = [{ ...payment, status: "dismissed" }];
   expect(recurringOverview(input).suggestions).toHaveLength(0);
@@ -180,4 +180,67 @@ test("six-month billing detects, matches and forecasts twice-yearly payments", (
   expect(result.monthlyEquivalentMinor).toBe(25999);
   expect(scheduledDate("2024-08-31", "semiannual", 1)).toBe("2025-02-28");
   expect(scheduledDate("2024-08-31", "semiannual", 2)).toBe("2025-08-31");
+});
+
+
+test("attached service-charge extras preserve history without changing the commitment or next date", () => {
+  const input = snapshot(["2026-01-12", "2026-01-27"], [{ ...payment, frequency: "semiannual", anchorDate: "2026-01-12", amountMinor: 166754 }]);
+  input.transactions[0].amountMinor = -166754;
+  input.transactions[1].amountMinor = -30711;
+  input.links = [{ paymentId: 1, transactionId: 2 }];
+  const result = recurringOverview(input, "2026-02-01").payments[0];
+  expect(result.transactions.map(t => t.id)).toEqual([1, 2]);
+  expect(result).toMatchObject({ monthlyEquivalentMinor: 27792, nextDate: "2026-07-12" });
+});
+
+test("temporary gym discounts and catch-up charges do not replace the expected monthly price", () => {
+  const input = snapshot(["2026-05-20", "2026-06-22", "2026-07-20"], [{ ...payment, frequency: "monthly", anchorDate: "2026-05-20", amountMinor: 2899 }]);
+  input.transactions.forEach((t, i) => t.amountMinor = [-2899, -699, -4146][i]);
+  for (const count of [2, 3]) {
+    const result = recurringOverview({ ...input, transactions: input.transactions.slice(0, count) }, "2026-07-21").payments[0];
+    expect(result.monthlyEquivalentMinor).toBe(2899);
+    expect(result.transactions).toHaveLength(count);
+    expect(result.priceChanged).toBe(true);
+  }
+});
+
+test("dated expected prices take effect without waiting for matching charges", () => {
+  const input = snapshot(["2026-01-31", "2026-02-28"], [{ ...payment, frequency: "monthly" }]);
+  input.methods = [{ paymentId: 1, accountId: 1, description: "TV LICENCE", matchMode: "exact", effectiveDate: "2026-02-01", anchorDate: null, frequency: null, amountMinor: 5000 }];
+  expect(recurringOverview(input, "2026-01-31").payments[0].monthlyEquivalentMinor).toBe(4400);
+  expect(recurringOverview(input, "2026-02-01").payments[0].monthlyEquivalentMinor).toBe(5000);
+  expect(recurringOverview(input, "2026-03-01").payments[0].monthlyEquivalentMinor).toBe(5000);
+});
+
+
+test("dismissing one price warning preserves its scheduled payment and permits future warnings", () => {
+  const input = snapshot(["2026-01-31", "2026-04-30"], [payment]);
+  input.transactions[1].amountMinor = -5000;
+  input.transactionDecisions = [{ paymentId: 1, transactionId: 2, oneOff: false, priceWarningDismissed: true }];
+  expect(recurringOverview(input, "2026-05-01").payments[0]).toMatchObject({ priceChanged: false, nextDate: "2026-07-31", monthlyEquivalentMinor: 1467 });
+  input.transactionDecisions[0].priceWarningDismissed = false;
+  expect(recurringOverview(input).payments[0].priceChanged).toBe(true);
+  input.transactionDecisions[0].priceWarningDismissed = true;
+  input.transactions.push({ ...input.transactions[1], id: 3, transactionDate: "2026-07-31" });
+  expect(recurringOverview(input).payments[0].priceChanged).toBe(true);
+  input.transactionDecisions[0].transactionId = 3;
+  input.transactionDecisions[0].paymentId = 999;
+  expect(recurringOverview(input).payments[0].priceChanged).toBe(true);
+});
+
+test("one-off adjustments inside a billing window preserve real history without satisfying a scheduled bill", () => {
+  const input = snapshot(["2026-01-31", "2026-04-30"], [payment]);
+  input.transactions[1].amountMinor = -30000;
+  input.links = [{ paymentId: 1, transactionId: 2 }];
+  input.transactionDecisions = [{ paymentId: 1, transactionId: 2, oneOff: true, priceWarningDismissed: false }];
+  input.coverage = [{ accountId: 1, startDate: "2026-04-01", endDate: "2026-05-31" }];
+  const result = recurringOverview(input, "2026-05-10").payments[0];
+  expect(result.transactions).toHaveLength(2);
+  expect(result).toMatchObject({ priceChanged: false, nextDate: "2026-04-30", paymentMissing: true, monthlyEquivalentMinor: 1467 });
+  input.transactions.push({ ...input.transactions[0], id: 3, transactionDate: "2026-04-30" });
+  expect(recurringOverview(input, "2026-05-10").payments[0]).toMatchObject({ nextDate: "2026-07-31", needsReview: false, paymentMissing: false });
+  expect(recurringOverview(input).payments[0].transactions).toHaveLength(3);
+  input.transactions.pop();
+  input.transactionDecisions[0].oneOff = false;
+  expect(recurringOverview(input).payments[0]).toMatchObject({ priceChanged: true, nextDate: "2026-07-31" });
 });

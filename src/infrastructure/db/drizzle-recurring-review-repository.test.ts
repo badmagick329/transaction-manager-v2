@@ -321,3 +321,18 @@ test("contains proposals validate, persist after approval, and require human rev
   f.repository.approve(decision.id, preview.evidenceVersion, preview.previewToken);
   expect(new DrizzleRecurringPaymentRepository(f.db).snapshotSync().payments[0].matchMode).toBe("contains");
 });
+
+
+test("transaction decisions invalidate review evidence and protect annotated payments from removal", async () => {
+  const f = fixture();
+  const applied = f.repository.submit(f.decision());
+  const paymentId = f.payments.snapshotSync().payments[0].id;
+  const before = f.repository.queue().evidenceVersion;
+  const input = { paymentId, transactionId: f.rows[2].id, oneOff: false, priceWarningDismissed: true };
+  await f.payments.setTransactionDecision(input);
+  expect(f.repository.queue().evidenceVersion).not.toBe(before);
+  expect(() => f.repository.undo(applied.id)).toThrow("transaction decisions");
+  await f.payments.setTransactionDecision({ ...input, priceWarningDismissed: false });
+  expect(f.payments.snapshotSync().transactionDecisions).toHaveLength(0);
+  expect(f.repository.undo(applied.id).status).toBe("undone");
+});

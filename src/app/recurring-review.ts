@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { recurringOverview, recurringDescription, recurringMerchant, previewRecurringChange, type RecurringSnapshot, type RecurringPayment, type PaymentMethodChange } from "./recurring-payments";
+import { recurringOverview, matchesRecurringDescription, recurringDescription, recurringMerchant, previewRecurringChange, type RecurringSnapshot, type RecurringPayment, type PaymentMethodChange } from "./recurring-payments";
 import type { ReviewAction, ReviewDecisionInput, ReviewReportInput } from "./contracts/recurring-review";
 
 // Stable serialization makes versions independent of database row and object-key order.
@@ -26,8 +26,7 @@ export function reviewSubjectVersion(snapshot: RecurringSnapshot, itemId: string
   return hash({ ...state,
     issues: { priceChanged: derived.priceChanged, needsReview: derived.needsReview, paymentMissing: derived.paymentMissing, coverageUnknown: derived.coverageUnknown, matchedTransactions: derived.transactions.map(t => t.id) },
     transactions: snapshot.transactions.filter(t => t.currencyCode === state.payment!.currencyCode && (state.links.some(l => l.transactionId === t.id) || methods.some(m => {
-      const description = recurringDescription(t.description);
-      return m.accountId === t.accountId && (m.matchMode === "exact" ? description === m.description : description.startsWith(m.description));
+      return m.accountId === t.accountId && matchesRecurringDescription(t.description, m.description, m.matchMode);
     }))),
     coverage: snapshot.coverage.filter(c => methods.some(m => m.accountId === c.accountId)),
   });

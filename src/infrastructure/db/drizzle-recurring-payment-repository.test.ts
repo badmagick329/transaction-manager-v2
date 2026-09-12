@@ -69,7 +69,8 @@ test("migration, persistence, exclusion changes, linking, and route validation",
   expect((await repository.snapshot()).methods[0].matchMode).toBe("exact");
   expect((await change({ ...method, effectiveDate: "2026-03-31", description: "STREAMING", matchMode: "starts_with", anchorDate: "2026-04-01", amountMinor: 1299 })).status).toBe(200);
   expect((await repository.snapshot()).methods[0]).toMatchObject({ matchMode: "starts_with", anchorDate: "2026-04-01", amountMinor: 1299 });
-  expect((await change({ ...method, matchMode: "contains" })).status).toBe(400);
+  expect((await change({ ...method, matchMode: "contains" })).status).toBe(200);
+  expect((await change({ ...method, matchMode: "regex" })).status).toBe(400);
   expect((await change({ ...method, description: " " })).status).toBe(400);
   db.$client.close();
 });

@@ -1,6 +1,6 @@
 export const frequencies = ["weekly", "monthly", "quarterly", "annual"] as const;
 export type Frequency = typeof frequencies[number];
-export type RecurringMatchMode = "exact" | "starts_with";
+export type RecurringMatchMode = "exact" | "starts_with" | "contains";
 export type RecurringPaymentInput = {
   name: string; kind: "subscription" | "bill" | "instalment";
   accountId: number; currencyCode: string; description: string; matchMode: RecurringMatchMode;
@@ -56,9 +56,13 @@ function onSchedule(payment: RecurringPaymentInput, transaction: RecurringTransa
   const cycle = cycleFor(payment.anchorDate, payment.frequency, transaction.transactionDate);
   return Math.abs(dateValue(transaction.transactionDate) - dateValue(scheduledDate(payment.anchorDate, payment.frequency, cycle))) <= (payment.frequency === "weekly" ? 1 : 4) * day;
 }
+// Use one comparison for tracking and review versions so both see the same merchant history.
+export function matchesRecurringDescription(value: string, pattern: string, mode: RecurringMatchMode) {
+  const description = recurringDescription(value), normalizedPattern = recurringDescription(pattern);
+  return mode === "contains" ? description.includes(normalizedPattern) : mode === "starts_with" ? description.startsWith(normalizedPattern) : description === normalizedPattern;
+}
 function sameMerchant(payment: RecurringPaymentInput, transaction: RecurringTransaction) {
-  const description = recurringDescription(transaction.description), pattern = recurringDescription(payment.description);
-  return payment.accountId === transaction.accountId && payment.currencyCode === transaction.currencyCode && (payment.matchMode === "starts_with" ? description.startsWith(pattern) : description === pattern);
+  return payment.accountId === transaction.accountId && payment.currencyCode === transaction.currencyCode && matchesRecurringDescription(transaction.description, payment.description, payment.matchMode);
 }
 
 // Blank overrides preserve the preceding schedule, including across later provider changes.

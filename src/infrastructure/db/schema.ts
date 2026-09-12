@@ -357,7 +357,7 @@ export const cashFlowExclusions = sqliteTable(
 );
 
 export const recurringPayments = sqliteTable("recurring_payments", {
-  matchMode: text("match_mode", { enum: ["exact", "starts_with"] }).notNull().default("exact"),
+  matchMode: text("match_mode", { enum: ["exact", "starts_with", "contains"] }).notNull().default("exact"),
   id: integer("id").primaryKey({ autoIncrement: true }),
   name: text("name").notNull(),
   kind: text("kind", { enum: ["subscription", "bill", "instalment"] }).notNull(),
@@ -376,7 +376,7 @@ export const recurringPaymentLinks = sqliteTable("recurring_payment_links", {
 });
 
 export const recurringPaymentMethods = sqliteTable("recurring_payment_methods", {
-  matchMode: text("match_mode", { enum: ["exact", "starts_with"] }).notNull().default("exact"),
+  matchMode: text("match_mode", { enum: ["exact", "starts_with", "contains"] }).notNull().default("exact"),
   anchorDate: text("anchor_date"),
   frequency: text("frequency", { enum: ["weekly", "monthly", "quarterly", "annual"] }),
   amountMinor: integer("amount_minor"),

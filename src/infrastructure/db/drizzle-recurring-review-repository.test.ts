@@ -307,3 +307,17 @@ test("related merchant charges remain visible and block fragmentary automatic cr
   expect(result.status).toBe("pending");
   expect(result.preview.relatedUnmatched).toHaveLength(1);
 });
+
+
+test("contains proposals validate, persist after approval, and require human review", () => {
+  const f = fixture();
+  const input = f.decision();
+  if (input.action.type !== "create") throw new Error("fixture");
+  input.action.input.matchMode = "contains";
+  expect(recurringInputSchema.parse(input.action.input).matchMode).toBe("contains");
+  const decision = f.repository.submit(input);
+  expect(decision.status).toBe("pending");
+  const preview = f.repository.preview(decision.id);
+  f.repository.approve(decision.id, preview.evidenceVersion, preview.previewToken);
+  expect(new DrizzleRecurringPaymentRepository(f.db).snapshotSync().payments[0].matchMode).toBe("contains");
+});

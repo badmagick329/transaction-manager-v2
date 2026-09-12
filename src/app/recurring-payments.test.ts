@@ -150,3 +150,20 @@ test("account switches retain full detection evidence", () => {
   input.transactions[3].accountId = 2;
   expect(recurringOverview(input).suggestions[0].transactions).toHaveLength(4);
 });
+
+
+test("contains matches Netcup through changing FX descriptions without crossing account or currency", () => {
+  const input = snapshot(["2026-01-27", "2026-02-27", "2026-03-27", "2026-04-27", "2026-05-27"]);
+  input.transactions.forEach((t, i) => { t.description = i < 4 ? `INT'L ${1000 + i} NETCUP KARLSRUHE EUR 8.28 @ 1.14${i} Visa Rate` : "NETCUP"; });
+  input.transactions.push({ ...input.transactions[0], id: 20, accountId: 2 }, { ...input.transactions[0], id: 21, currencyCode: "EUR" });
+  const tracked: RecurringPayment = { ...payment, name: "Netcup", description: " netcup ", matchMode: "contains", frequency: "monthly", anchorDate: "2026-01-27" };
+  const after = { ...input, payments: [tracked] };
+  expect(recurringOverview(after).payments[0].transactions.map(t => t.id)).toEqual([1, 2, 3, 4, 5]);
+  expect(previewRecurringChange(input, after, tracked.id).rows).toHaveLength(5);
+  expect(recurringOverview({ ...after, payments: [{ ...tracked, matchMode: "starts_with" }] }).payments[0].transactions).toHaveLength(1);
+  const switched = { ...input, payments: [{ ...tracked, matchMode: "exact" as const, description: "NETCUP" }], methods: [{ paymentId: tracked.id, accountId: 1, description: "NETCUP", matchMode: "contains" as const, effectiveDate: "2026-01-01", anchorDate: null, frequency: null, amountMinor: null }] };
+  expect(recurringOverview(switched).payments[0].transactions).toHaveLength(5);
+  after.transactions.push({ ...input.transactions[0], id: 22 });
+  expect(recurringOverview(after).payments[0].needsReview).toBe(true);
+  expect(recurringOverview(after).payments[0].transactions.map(t => t.id)).not.toContain(22);
+});

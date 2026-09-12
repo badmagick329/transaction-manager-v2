@@ -18,7 +18,7 @@ export const recurringInputSchema = z.object({
   accountId: id,
   currencyCode: z.string().regex(/^[A-Z]{3}$/),
   description: z.string().trim().min(1).max(500).transform(recurringDescription),
-  matchMode: z.enum(["exact", "starts_with"]),
+  matchMode: z.enum(["exact", "starts_with", "contains"]),
   amountMinor: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   frequency: z.enum(frequencies),
   anchorDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(value => {

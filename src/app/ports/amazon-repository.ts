@@ -1,4 +1,4 @@
-import type { AmazonImport, AmazonLinkInput, AmazonOrder } from "../contracts/amazon-orders";
+import type { AmazonImport, AmazonLinkInput, AmazonOrder, AmazonMoneyReview } from "../contracts/amazon-orders";
 import type { AmazonSnapshot, Mapping } from "../amazon-orders";
 import type { ImportBatchSummary } from "./import-repository";
 
@@ -12,5 +12,6 @@ export interface AmazonRepository {
   importFile(input: { fileName: string; fileHash: string; importFile: AmazonImport }): Promise<ImportBatchSummary>;
   reviewLink(input: AmazonLinkInput): void;
   reviewRevision(revisionId: number, accept: boolean): void;
+  reviewMoney(input: AmazonMoneyReview): void;
   saveMapping(mapping: Mapping): void;
 }

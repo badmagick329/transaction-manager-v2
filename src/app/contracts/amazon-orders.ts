@@ -13,7 +13,7 @@ export const amazonOrderSchema = z.object({
   items: z.array(amazonItemSchema).optional(),
   subtotalMinor: money.optional(), subtotalExcludesVat: z.boolean().optional(), vatMinor: money.optional(),
   deliveryMinor: money.optional(), giftWrapMinor: money.optional(), discountMinor: money.optional(), totalMinor: money.optional(),
-  giftCardMinor: money.optional(), cardMinor: money.optional(), refundMinor: money.optional(),
+  giftCardMinor: money.optional(), cardMinor: money.optional(), refundMinor: money.optional(), refundBalanceMinor: money.optional(),
   card: z.object({ brand: z.string().min(1), lastFour: z.string().regex(/^\d{4}$/) }).strict().optional(),
   payments: z.array(z.object({ id: z.string().min(1), kind: z.enum(["charge", "refund"]), amountMinor: money, date: date.optional(), destination: z.string().optional(), itemIds: z.array(z.string()).optional() }).strict()).optional(),
 }).strict().superRefine((o, ctx) => {
@@ -25,6 +25,10 @@ export const amazonOrderSchema = z.object({
   if (o.totalMinor !== undefined && o.cardMinor !== undefined && o.giftCardMinor !== undefined && o.totalMinor !== o.cardMinor + o.giftCardMinor) fail("Total must equal card plus gift-card funding");
   if (!o.incomplete && o.items && o.totalMinor !== o.items.reduce((n, i) => n + i.amountMinor, 0) + (o.deliveryMinor ?? 0) + (o.giftWrapMinor ?? 0) - (o.discountMinor ?? 0)) fail("Item line totals plus delivery and gift wrap minus discounts must equal total (item amounts include VAT)");
   if (o.subtotalMinor !== undefined && o.totalMinor !== undefined && o.subtotalExcludesVat !== undefined && (!o.subtotalExcludesVat || o.vatMinor !== undefined) && o.subtotalMinor + (o.subtotalExcludesVat ? o.vatMinor! : 0) + (o.deliveryMinor ?? 0) + (o.giftWrapMinor ?? 0) - (o.discountMinor ?? 0) !== o.totalMinor) fail("Subtotal/VAT reconciliation failed");
+  const issued = (o.payments ?? []).filter(p => p.kind === "refund");
+  if (o.refundMinor !== undefined && issued.reduce((n, p) => n + p.amountMinor, 0) > o.refundMinor) fail("Issued refund evidence exceeds refund total");
+  if (o.refundBalanceMinor !== undefined && issued.filter(p => p.destination === "ElectronicGiftCertificate").reduce((n, p) => n + p.amountMinor, 0) > o.refundBalanceMinor) fail("Amazon balance refund total is below the recorded balance refunds");
+  if (o.refundBalanceMinor !== undefined && (o.refundMinor === undefined || o.refundBalanceMinor > o.refundMinor)) fail("Amazon balance refund exceeds issued refunds");
   if (o.refundMinor !== undefined && o.totalMinor !== undefined && o.refundMinor > o.totalMinor) fail("Refund exceeds order total");
 });
 export const amazonImportSchema = z.object({
@@ -41,3 +45,12 @@ export const amazonLinkSchema = z.object({
   status: z.enum(["confirmed", "rejected", "unlinked"]),
 }).strict();
 export type AmazonLinkInput = z.infer<typeof amazonLinkSchema>;
+
+/** Reviewed evidence changes use the revision seen by the user to avoid overwriting newer imports. */
+export const amazonMoneyReviewSchema = z.object({
+  orderId: z.number().int().positive(), revisionId: z.number().int().positive(),
+  evidence: z.string().trim().min(1),
+  funding: z.object({ balanceMinor: money }).strict().optional(),
+  refunds: z.object({ totalMinor: money, balanceMinor: money.optional() }).strict().optional(),
+}).strict().refine(v => v.funding !== undefined || v.refunds !== undefined, "Enter funding or issued refund details");
+export type AmazonMoneyReview = z.infer<typeof amazonMoneyReviewSchema>;

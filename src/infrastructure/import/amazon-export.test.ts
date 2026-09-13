@@ -53,3 +53,11 @@ test("cancelled rows excluded, malformed money fails with order diagnostic", () 
   expect(parse([row({Website:"PrimeNow-UK"})]).file.orders[0]!.marketplace).toBe("primenow-uk");
   expect(()=>parse([row({Website:"../../outside"})])).toThrow("Unsupported retail marketplace");
 });
+
+
+test("pending refund requests do not reduce purchase spending", () => {
+  const result = parse([row()], {"Your Returns & Refunds/Refund Details.csv": csv([{"Order ID":"000-0000000-0000001",Website:"Amazon.co.uk",Currency:"GBP","Payment Status":"Pending","Reversal Status":"Pending","Disbursement Type":"Refund","Refund Amount":"22.20","Refund Date":"2026-08-12T12:00:00Z"}])});
+  expect(result.file.orders[0]!.refundMinor).toBeUndefined();
+  expect(result.file.orders[0]!.payments).toBeUndefined();
+  expect(result.report.refundEvents).toBe(0);
+});

@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { amazonImportSchema, amazonOrderSchema, type AmazonOrder } from "./contracts/amazon-orders";
-import { candidates, mergeOrder, validateLink, itemBreakdown, type AmazonSnapshot } from "./amazon-orders";
+import { balanceRefund, purchaseSpending, remaining, reviewedMoney, candidates, mergeOrder, validateLink, itemBreakdown, type AmazonSnapshot } from "./amazon-orders";
 
 import { sampleOrder, sampleFile } from "./amazon-order-fixtures";
 const snapshot = (): AmazonSnapshot => ({ orders: [{ id: 1, revisionId: 1, needsReview: false, data: sampleOrder() }], links: [], mappings: [], transactions: [{ id: 1, accountId: 1, accountName: "Current", description: "Amazon Marketplace", amountMinor: -2619, currencyCode: "GBP", transactionDate: "2026-08-09T15:00:00Z", status: "posted" }] });
@@ -66,4 +66,59 @@ test("partial allocation validates both sides, supports refunds and keeps unknow
   s.transactions[0]!.amountMinor = 399; s.orders[0]!.data.refundMinor = 399;
   s.orders[0]!.data.items![1]!.returned = true;
   validateLink(s, { ...input, kind: "refund", amountMinor: 399, allocations: [{ itemId: "lanyard", amountMinor: 399 }] });
+});
+
+
+test("pooled balance funding shows full goods without allocating credit across items", () => {
+  const s = snapshot();
+  s.orders[0]!.data = sampleOrder({cardMinor: 2000, giftCardMinor: 619});
+  s.transactions[0]!.amountMinor = -2000;
+  const link = { id: 1, orderId: 1, transactionId: 1, kind: "purchase" as const, amountMinor: 2000, allocations: [], status: "confirmed" as const };
+  validateLink(s, link);
+  expect(itemBreakdown(s.orders[0]!, link)).toMatchObject({wholeOrder:true, balanceMinor:619, unresolvedMinor:0});
+  expect(itemBreakdown(s.orders[0]!, link).items.map(i => i.amountMinor)).toEqual([2220,399]);
+  expect(() => validateLink(s, {...link, allocations:[{itemId:"drink",amountMinor:2220},{itemId:"lanyard",amountMinor:399}]})).toThrow("Invalid item allocation total");
+});
+
+test("issued refunds reduce purchases once, balance refunds never count as bank receipts", () => {
+  const s = snapshot();
+  s.orders[0]!.data = sampleOrder({refundMinor:1000, payments:[{id:"return",kind:"refund",amountMinor:700,destination:"ElectronicGiftCertificate"}]});
+  expect(purchaseSpending(s.orders[0]!.data)).toBe(1619);
+  expect(balanceRefund(s.orders[0]!.data)).toBe(700);
+  expect(remaining(s.orders[0]!, [], "refund")).toBe(300);
+  s.transactions[0]!.amountMinor=1000;
+  const link = {orderId:1,transactionId:1,kind:"refund" as const,amountMinor:300,allocations:[],status:"confirmed" as const};
+  validateLink(s, link);
+  expect(() => validateLink(s,{...link,amountMinor:301})).toThrow();
+  expect(purchaseSpending(sampleOrder({refundMinor:2619}))).toBe(0);
+});
+
+test("reviewed funding reconciles unknown amounts without clearing unresolved adjustments", () => {
+  const review = {orderId:1,revisionId:1,evidence:"Amazon order summary",funding:{balanceMinor:619}};
+  const order = sampleOrder({cardMinor:undefined,giftCardMinor:undefined,incomplete:true,deliveryMinor:0,discountMinor:0});
+  expect(reviewedMoney(order,review)).toMatchObject({cardMinor:2000,giftCardMinor:619,incomplete:false});
+  expect(reviewedMoney({...order,deliveryMinor:undefined},review).incomplete).toBe(true);
+  expect(() => reviewedMoney(order,{...review,funding:{balanceMinor:3000}})).toThrow();
+  expect(() => reviewedMoney(order,{...review,refunds:{totalMinor:500,balanceMinor:600}})).toThrow();
+});
+
+test("later balance refund evidence advances reviewed totals without counting repeat snapshots twice", () => {
+  const before=sampleOrder({refundMinor:500,refundBalanceMinor:500,payments:[{id:"first",kind:"refund",amountMinor:500,destination:"ElectronicGiftCertificate"}]});
+  const incoming=sampleOrder({refundMinor:800,payments:[...before.payments!,{id:"second",kind:"refund",amountMinor:300,destination:"ElectronicGiftCertificate"}]});
+  const after=mergeOrder(before,incoming).data;
+  expect(balanceRefund(after)).toBe(800);
+  expect(balanceRefund(mergeOrder(after,incoming).data)).toBe(800);
+  expect(purchaseSpending(after)).toBe(1819);
+});
+
+
+test("late export evidence does not add a manually recorded balance refund a second time", () => {
+  const before=sampleOrder({refundMinor:500,refundBalanceMinor:500});
+  const evidence={id:"export-return",kind:"refund" as const,amountMinor:500,destination:"ElectronicGiftCertificate"};
+  const caughtUp=mergeOrder(before,sampleOrder({refundMinor:500,payments:[evidence]}));
+  expect(caughtUp.conflict).toBe(false);
+  expect(balanceRefund(caughtUp.data)).toBe(500);
+  expect(purchaseSpending(caughtUp.data)).toBe(2119);
+  const later=mergeOrder(before,sampleOrder({refundMinor:800,payments:[{...evidence,amountMinor:300}]}));
+  expect(balanceRefund(later.data)).toBe(800);
 });

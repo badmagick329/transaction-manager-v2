@@ -23,7 +23,7 @@ const amountInput = (value: string) => {
 
 export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
   const [search, setSearch] = useState(() => window.location.pathname === "/amazon-orders" ? window.location.search : "");
-  const [list, setList] = useState<AmazonOrderList>({ orders: [], total: 0 });
+  const [list, setList] = useState<AmazonOrderList>({ orders: [], total: 0, spending: [] });
   const [detail, setDetail] = useState<AmazonOrderDetail | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -66,9 +66,11 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
       <label className="text-sm">To <input aria-label="Orders to" type="date" className={field} value={query.get("to") ?? ""} onChange={e => change("to", e.target.value)} /></label>
       <select aria-label="Matching status" className={field} value={query.get("status") ?? ""} onChange={e => change("status", e.target.value)}><option value="">All statuses</option>{["unmatched", "partially-matched", "matched", "needs-review"].map(s => <option key={s} value={s}>{s.replaceAll("-", " ")}</option>)}</select>
     </div>
+    {list.spending.map(s => <div key={s.currencyCode} className="rounded border border-neutral-800 p-3 text-sm"><p>Purchase spending after recorded refunds: {formatMoney(s.amountMinor, s.currencyCode)}</p><p className="text-neutral-400">Issued refunds: {formatMoney(s.refundsMinor, s.currencyCode)}. Covers all filtered orders, across every page. Separate from bank cash flow.{s.unknownOrders > 0 && ` Excludes ${s.unknownOrders} orders with unknown values.`}</p></div>)}
     {!list.total && <p className="rounded-xl border border-neutral-800 p-6 text-neutral-400">No orders found. Supply order-details PDFs through the agent-assisted import workflow.</p>}
     <div className="grid grid-cols-1 gap-2">{list.orders.map(o => <button key={o.id} aria-haspopup="dialog" className={`min-w-0 w-full rounded-xl border p-4 text-left ${String(o.id) === selected ? "border-sky-500" : "border-neutral-800"}`} onClick={event => { opener.current = event.currentTarget; change("order", String(o.id), true); }}>
       <span className="flex flex-wrap justify-between gap-2"><strong>{o.data.orderId}</strong><span>{o.data.totalMinor === undefined ? "Total unknown" : formatMoney(o.data.totalMinor, o.data.currencyCode)}</span></span>
+      {!!o.data.refundMinor && <span className="block text-sm text-emerald-300">Refunded {formatMoney(o.data.refundMinor, o.data.currencyCode)} · Spending after refund {o.spendingMinor === undefined ? "Unknown" : formatMoney(o.spendingMinor, o.data.currencyCode)}</span>}
       <span className="block text-sm text-neutral-400">{o.data.orderDate} · {o.status.replaceAll("-", " ")}{o.data.cardMinor === 0 ? " · No card payment expected" : ""}</span>
       <span className="mt-1 block break-words text-sm text-neutral-300">{o.data.items?.map(i => i.description).join(" · ")}</span>
     </button>)}</div>
@@ -130,17 +132,19 @@ function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDeta
     {data.incomplete && <p className="text-sm text-amber-300">Order details incomplete: some funding or adjustment details are unverified. Confirming a payment does not fill in missing order evidence.</p>}
     <ul className="divide-y divide-neutral-800">{data.items?.map(i => <li key={i.id} className="flex justify-between gap-4 py-3"><span>{i.description}{i.quantity !== undefined && <span className="text-neutral-400"> · Quantity {i.quantity}</span>}{i.shipment && <small className="block text-neutral-400">Shipment: {i.shipment}</small>}{i.returned && <small className="block text-amber-300">Returned</small>}</span><span className="whitespace-nowrap">{money(i.amountMinor)}</span></li>)}</ul>
     <dl className="grid grid-cols-2 gap-2 text-sm">{([
-      [data.subtotalExcludesVat ? "Subtotal (excluding VAT)" : "Subtotal", data.subtotalMinor], ["VAT (already included in item prices)", data.vatMinor], ["Delivery", data.deliveryMinor], ...(data.giftWrapMinor !== undefined ? [["Gift wrap", data.giftWrapMinor]] : []), ["Discount", data.discountMinor], ["Order value", data.totalMinor], ["Gift-card funding", data.giftCardMinor], ["Expected card amount", data.cardMinor], ["Unmatched card amount", order.remainingMinor], ["Reported refunds", data.refundMinor],
+      [data.subtotalExcludesVat ? "Subtotal (excluding VAT)" : "Subtotal", data.subtotalMinor], ["VAT (already included in item prices)", data.vatMinor], ["Delivery", data.deliveryMinor], ...(data.giftWrapMinor !== undefined ? [["Gift wrap", data.giftWrapMinor]] : []), ["Discount", data.discountMinor], ["Order value", data.totalMinor], ["Amazon balance used", data.giftCardMinor], ["Expected card amount", data.cardMinor], ["Unmatched card amount", order.remainingMinor], ["Issued refunds", data.refundMinor], ["Known refunds to Amazon balance", order.balanceRefundMinor], ["Purchase spending after recorded refunds", order.spendingMinor],
     ] as Array<[string, number | undefined]>).map(([label, value]) => <div key={label} className="contents"><dt className="text-neutral-400">{label}</dt><dd>{money(value)}</dd></div>)}</dl>
     {data.cardMinor === 0 && <p className="text-emerald-300">No card payment expected</p>}
-    {!!order.refundRemainingMinor && <p className="text-amber-300">{data.payments?.some(p => p.kind === "refund" && p.destination === "ElectronicGiftCertificate") ? "Reported by Amazon — includes a gift-card refund; see destination below" : "Reported by Amazon — bank receipt unconfirmed"}: {money(order.refundRemainingMinor)}</p>}
-    {data.payments?.map(p => <p key={p.id} className="text-sm">{p.kind}: {money(p.amountMinor)} · {p.date ?? "Date unknown"} · {p.destination === "ElectronicGiftCertificate" ? "Amazon gift card" : p.destination ?? "Destination unknown"}</p>)}
+    <p className="text-sm text-neutral-400">Purchase spending includes all funding and subtracts issued refunds. Bank cash flow is separate. No recorded refund does not prove that no refund exists.</p>
+    <MoneyReview key={order.revisionId} order={order} busy={busy} action={action} />
+    {!!order.refundRemainingMinor && <p className="text-amber-300">Refund not linked to a bank receipt (destination may be unknown): {money(order.refundRemainingMinor)}</p>}
+    {data.payments?.map(p => <p key={p.id} className="text-sm">{p.kind}: {money(p.amountMinor)} · {p.date ?? "Date unknown"} · {p.destination === "ElectronicGiftCertificate" ? "Amazon balance" : p.destination ?? "Destination unknown"}</p>)}
     {data.card && <div className="flex flex-wrap items-center gap-2"><span>{data.card.brand} ••••{data.card.lastFour}</span><select aria-label="Map Amazon card to account" className={field} value={accountId} onChange={e => setAccountId(e.target.value)}><option value="">Choose account</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name} ({a.currencyCode})</option>)}</select><Button disabled={busy || !accountId} onClick={() => action("/mapping", { ...data.card, accountId: Number(accountId) })}>Confirm account mapping</Button></div>}
     <h3 className="font-semibold">Suggested payments</h3>
     {!order.candidates.length && <p className="text-sm text-neutral-400">No exact candidates. Use manual search below for split payments or refunds.</p>}
     {order.candidates.map(c => <div key={c.transaction.id} className="space-y-2 rounded border border-neutral-800 p-3"><p>{c.transaction.transactionDate.slice(0, 10)} · {c.transaction.accountName} · {money(c.amountMinor)}</p><p className="text-sm text-neutral-400">{c.unique ? "Unique candidate" : "Ambiguous candidate"} · {c.reason}</p><div className="flex gap-2"><Button disabled={busy} onClick={() => review({ orderId: order.id, transactionId: c.transaction.id, amountMinor: c.amountMinor, kind: "purchase", allocations: [], status: "confirmed" }, "confirmed")}>Confirm</Button><Button variant="outline" disabled={busy} onClick={() => review({ orderId: order.id, transactionId: c.transaction.id, amountMinor: c.amountMinor, kind: "purchase", allocations: [], status: "rejected" }, "rejected")}>Reject</Button></div></div>)}
     <h3 className="font-semibold">Payment links</h3>
-    {order.links.map(l => <div key={l.id} className="space-y-2 rounded border border-neutral-800 p-3"><p>{l.transaction.transactionDate.slice(0, 10)} · {l.transaction.accountName} · {l.kind} · {money(l.amountMinor)} · {l.status.replaceAll("_", " ")}</p><p className="text-sm text-neutral-400">{l.breakdown.unresolvedMinor ? `Item allocation unresolved: ${money(l.breakdown.unresolvedMinor)}` : "Item allocation complete"}</p>{l.breakdown.items.map(i => <p key={i.id} className="text-sm">{i.description} · {money(i.amountMinor)}</p>)}<div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy} onClick={() => { select(l.transaction); setAmount((l.amountMinor / 100).toFixed(2)); setKind(l.kind); setAllocations(Object.fromEntries(l.allocations.map(a => [a.itemId, (a.amountMinor / 100).toFixed(2)]))); }}>Review / edit</Button>{l.status !== "unlinked" && <Button variant="outline" disabled={busy} onClick={() => review({ ...l, status: "unlinked" }, "unlinked")}>{l.status === "rejected" ? "Reconsider" : "Unlink"}</Button>}</div></div>)}
+    {order.links.map(l => <div key={l.id} className="space-y-2 rounded border border-neutral-800 p-3"><p>{l.transaction.transactionDate.slice(0, 10)} · {l.transaction.accountName} · {l.kind} · {money(l.amountMinor)} · {l.status.replaceAll("_", " ")}</p><p className="text-sm text-neutral-400">{l.breakdown.wholeOrder ? "Full order contents; funding is not allocated across items" : l.breakdown.unresolvedMinor ? `Item allocation unresolved: ${money(l.breakdown.unresolvedMinor)}` : "Item allocation complete"}</p>{l.breakdown.items.map(i => <p key={i.id} className="text-sm">{i.description} · {money(i.amountMinor)}</p>)}<div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy} onClick={() => { select(l.transaction); setAmount((l.amountMinor / 100).toFixed(2)); setKind(l.kind); setAllocations(Object.fromEntries(l.allocations.map(a => [a.itemId, (a.amountMinor / 100).toFixed(2)]))); }}>Review / edit</Button>{l.status !== "unlinked" && <Button variant="outline" disabled={busy} onClick={() => review({ ...l, status: "unlinked" }, "unlinked")}>{l.status === "rejected" ? "Reconsider" : "Unlink"}</Button>}</div></div>)}
     <h3 className="font-semibold">Find a payment or refund</h3>
     <div className="flex gap-2"><input className={`${field} min-w-0 flex-1`} aria-label="Search bank transactions" placeholder="Description, account, date, amount or transaction ID" value={manualQuery} onChange={e => setManualQuery(e.target.value)} /><Button variant="outline" onClick={() => search()}>Search</Button></div>
     <div className="max-h-60 overflow-auto">{results.map(t => <button className="block w-full border-b border-neutral-800 p-2 text-left text-sm hover:bg-neutral-800" key={t.id} onClick={() => select(t)}>#{t.id} · {t.transactionDate.slice(0, 10)} · {t.accountName} · {t.description} · {formatMoney(t.amountMinor, t.currencyCode)}</button>)}</div>
@@ -153,7 +157,7 @@ function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDeta
 
 
 function RevisionDetails({ revision, current }: { revision: AmazonEvidence["revisions"][number]; current: AmazonOrder }) {
-  const fields: Array<[keyof AmazonOrder, string]> = [["orderDate", "Order date"], ["currencyCode", "Currency"], ["totalMinor", "Order value"], ["cardMinor", "Card amount"], ["giftCardMinor", "Gift-card funding"], ["refundMinor", "Reported refunds"], ["deliveryMinor", "Delivery"], ["giftWrapMinor", "Gift wrap"], ["discountMinor", "Discount"], ["vatMinor", "VAT"]];
+  const fields: Array<[keyof AmazonOrder, string]> = [["orderDate", "Order date"], ["currencyCode", "Currency"], ["totalMinor", "Order value"], ["cardMinor", "Card amount"], ["giftCardMinor", "Amazon balance used"], ["refundMinor", "Issued refunds"], ["refundBalanceMinor", "Refunded to Amazon balance"], ["deliveryMinor", "Delivery"], ["giftWrapMinor", "Gift wrap"], ["discountMinor", "Discount"], ["vatMinor", "VAT"]];
   const display = (data: AmazonOrder, key: keyof AmazonOrder) => data[key] === undefined ? "Unknown" : typeof data[key] === "number" ? formatMoney(data[key] as number, data.currencyCode) : String(data[key]);
   return <details><summary className="cursor-pointer">View order evidence{revision.status === "pending" ? " and proposed changes" : ""}</summary>
     <div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>Detail</th>{revision.status === "pending" && <th>Current</th>}<th>{revision.status === "pending" ? "Proposed" : "This revision"}</th></tr></thead><tbody>{fields.map(([key, label]) => <tr key={key} className="border-b border-neutral-800"><td className="py-2 text-neutral-400">{label}</td>{revision.status === "pending" && <td>{display(current, key)}</td>}<td className={revision.status === "pending" && display(current, key) !== display(revision.data, key) ? "text-amber-300" : ""}>{display(revision.data, key)}</td></tr>)}</tbody></table></div>
@@ -169,4 +173,33 @@ function HistoryDetail({ event, currency }: { event: AmazonEvidence["history"][n
   }
   const change = event.detail as { revisionId: number };
   return <p className="py-2 text-sm text-neutral-400">Revision {change.revisionId}</p>;
+}
+
+function MoneyReview({ order, busy, action }: { order: AmazonOrderDetail; busy: boolean; action: (path: string, body: unknown) => Promise<void> }) {
+  const [balance, setBalance] = useState(order.data.giftCardMinor === undefined ? "" : (order.data.giftCardMinor / 100).toFixed(2));
+  const [refund, setRefund] = useState(order.data.refundMinor === undefined ? "" : (order.data.refundMinor / 100).toFixed(2));
+  const [refundBalance, setRefundBalance] = useState(order.data.refundBalanceMinor !== undefined || order.balanceRefundMinor > 0 ? (order.balanceRefundMinor / 100).toFixed(2) : "");
+  const [evidence, setEvidence] = useState("");
+  const [error, setError] = useState("");
+  async function save(kind: "funding" | "refunds") {
+    try {
+      if (!evidence.trim()) throw new Error("Describe the Amazon order page or refund confirmation you checked");
+      await action("/money", { orderId: order.id, revisionId: order.revisionId, evidence,
+        ...(kind === "funding" ? { funding: { balanceMinor: amountInput(balance) } } : { refunds: { totalMinor: amountInput(refund), ...(refundBalance ? { balanceMinor: amountInput(refundBalance) } : {}) } }) });
+      setError("");
+    } catch (e) { setError((e as Error).message); }
+  }
+  const balanceValue = /^\d+(\.\d{1,2})?$/.test(balance) ? Math.round(Number(balance) * 100) : undefined;
+  return <details className="rounded border border-neutral-700 p-3"><summary className="cursor-pointer font-semibold">Review funding or issued refunds</summary><div className="space-y-3 pt-3">
+    <p className="text-sm text-neutral-400">Amazon balance includes gift cards and earlier refunds. Enter amounts shown by Amazon; do not infer funding from a bank charge.</p>
+    <label className="block text-sm">Evidence checked<textarea className={`${field} block w-full`} value={evidence} onChange={e => setEvidence(e.target.value)} placeholder="For example: order summary shows £20.22 gift card and £601.75 card" /></label>
+    <label className="block text-sm">Amazon balance used ({order.data.currencyCode})<input className={`${field} block`} inputMode="decimal" value={balance} onChange={e => setBalance(e.target.value)} /></label>
+    {balanceValue !== undefined && order.data.totalMinor !== undefined && <p className="text-sm">Expected bank payment: {formatMoney(order.data.totalMinor - balanceValue, order.data.currencyCode)}</p>}
+    <Button disabled={busy || order.data.totalMinor === undefined} onClick={() => save("funding")}>Save reviewed funding</Button>
+    <p className="text-sm text-neutral-400">Refund amounts below are cumulative for this order. Include only issued refunds, not pending return requests. Leave the total blank when unknown.</p>
+    <label className="block text-sm">Total issued refunds ({order.data.currencyCode})<input className={`${field} block`} inputMode="decimal" value={refund} onChange={e => setRefund(e.target.value)} /></label>
+    <label className="block text-sm">Of that, refunded to Amazon balance - leave blank if unknown ({order.data.currencyCode})<input className={`${field} block`} inputMode="decimal" value={refundBalance} onChange={e => setRefundBalance(e.target.value)} /></label>
+    <Button disabled={busy || !refund} onClick={() => save("refunds")}>Save issued refund totals</Button>
+    {error && <p role="alert" className="text-red-300">{error}</p>}
+  </div></details>;
 }

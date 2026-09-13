@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { amazonDateSchema, amazonLinkSchema } from "../../app/contracts/amazon-orders";
+import { amazonDateSchema, amazonLinkSchema, amazonMoneyReviewSchema } from "../../app/contracts/amazon-orders";
 import { itemBreakdown } from "../../app/amazon-orders";
 import type { AmazonRepository } from "../../app/ports/amazon-repository";
 import { queryAmazonOrder, queryAmazonOrders } from "../../app/use-cases/query-amazon-orders";
@@ -19,6 +19,7 @@ export function createAmazonRoutes(repository: AmazonRepository) {
     "/api/amazon-orders/detail": { GET: handler(request => queryAmazonOrder(repository, id.parse(new URL(request.url).searchParams.get("id")))) },
     "/api/amazon-orders/link": { POST: handler(async request => { repository.reviewLink(amazonLinkSchema.parse(await request.json())); return { ok: true }; }) },
     "/api/amazon-orders/revision": { POST: handler(async request => { const input = z.object({ revisionId: id, accept: z.boolean() }).strict().parse(await request.json()); repository.reviewRevision(input.revisionId, input.accept); return { ok: true }; }) },
+    "/api/amazon-orders/money": { POST: handler(async request => { repository.reviewMoney(amazonMoneyReviewSchema.parse(await request.json())); return { ok: true }; }) },
     "/api/amazon-orders/mapping": { POST: handler(async request => { const input = z.object({ brand: z.string().min(1), lastFour: z.string().regex(/^\d{4}$/), accountId: id }).strict().parse(await request.json()); repository.saveMapping(input); return { ok: true }; }) },
     "/api/amazon-orders/transactions": { GET: handler(request => {
       const input = z.object({ q: z.string().default(""), offset: z.coerce.number().int().nonnegative().default(0) }).strict().parse(Object.fromEntries(new URL(request.url).searchParams));

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { and, eq } from "drizzle-orm";
-import { mergeOrder, validateLink, type Mapping, type AmazonSnapshot } from "../../app/amazon-orders";
-import { amazonImportSchema, type AmazonImport, type AmazonLinkInput } from "../../app/contracts/amazon-orders";
+import { mergeOrder, validateLink, reviewedMoney, balanceRefund, type Mapping, type AmazonSnapshot } from "../../app/amazon-orders";
+import { amazonImportSchema, amazonMoneyReviewSchema, type AmazonMoneyReview, type AmazonImport, type AmazonLinkInput } from "../../app/contracts/amazon-orders";
 import type { AmazonRepository } from "../../app/ports/amazon-repository";
 import type { AppDatabase } from "./client";
 import { accounts, amazonOrders, amazonRevisions, amazonLinks, amazonMappings, amazonHistory, transactions, importBatches, importAttempts } from "./schema";
@@ -44,6 +44,7 @@ export class DrizzleAmazonRepository implements AmazonRepository {
         const revision = tx.insert(amazonRevisions).values({ orderId: order.id, fingerprint: hash, data: merged.data, incomingData: incoming, source: file.source, status: merged.conflict ? "pending" : "accepted" }).returning().get();
         if (!merged.conflict) {
           tx.update(amazonOrders).set({ revisionId: revision.id }).where(eq(amazonOrders.id, order.id)).run();
+          if (current && balanceRefund(current.data) !== balanceRefund(merged.data)) tx.update(amazonLinks).set({ status: "needs_review" }).where(and(eq(amazonLinks.orderId, order.id), eq(amazonLinks.kind, "refund"), eq(amazonLinks.status, "confirmed"))).run();
           if (current && this.materialChange(current.data, merged.data)) {
             tx.update(amazonLinks).set({ status: "needs_review" }).where(and(eq(amazonLinks.orderId, order.id), eq(amazonLinks.status, "confirmed"))).run();
           }
@@ -81,10 +82,29 @@ export class DrizzleAmazonRepository implements AmazonRepository {
         const data = mergeOrder(current.data, revision.incomingData).data;
         tx.update(amazonRevisions).set({ data }).where(eq(amazonRevisions.id, revisionId)).run();
         tx.update(amazonOrders).set({ revisionId }).where(eq(amazonOrders.id, order.id)).run();
+        if (balanceRefund(current.data) !== balanceRefund(data)) tx.update(amazonLinks).set({ status: "needs_review" }).where(and(eq(amazonLinks.orderId, order.id), eq(amazonLinks.kind, "refund"), eq(amazonLinks.status, "confirmed"))).run();
         if (this.materialChange(current.data, data)) tx.update(amazonLinks).set({ status: "needs_review" }).where(and(eq(amazonLinks.orderId, order.id), eq(amazonLinks.status, "confirmed"))).run();
       }
       tx.update(amazonRevisions).set({ status: accept ? "accepted" : "rejected" }).where(eq(amazonRevisions.id, revisionId)).run();
       tx.insert(amazonHistory).values({ orderId: order.id, action: accept ? "revision-accepted" : "revision-rejected", detail: { revisionId } }).run();
+    });
+  }
+
+  reviewMoney(input: AmazonMoneyReview) {
+    input = amazonMoneyReviewSchema.parse(input);
+    this.db.transaction(tx => {
+      const order = tx.select().from(amazonOrders).where(eq(amazonOrders.id, input.orderId)).get();
+      if (!order || order.revisionId !== input.revisionId) throw new Error("Order changed. Refresh and review the current details");
+      const current = tx.select().from(amazonRevisions).where(eq(amazonRevisions.id, order.revisionId)).get()!;
+      const data = reviewedMoney(current.data, input);
+      if (fingerprint(data) === fingerprint(current.data)) return;
+      const capturedAt = new Date().toISOString();
+      const source = { fileName: "Reviewed order funding and refunds", fileHash: fingerprint(input), capturedAt, evidence: input.evidence };
+      const revision = tx.insert(amazonRevisions).values({ orderId: order.id, fingerprint: fingerprint({ data, input, capturedAt }), data, incomingData: data, source, status: "accepted" }).returning().get();
+      tx.update(amazonOrders).set({ revisionId: revision.id }).where(eq(amazonOrders.id, order.id)).run();
+      if (balanceRefund(current.data) !== balanceRefund(data)) tx.update(amazonLinks).set({ status: "needs_review" }).where(and(eq(amazonLinks.orderId, order.id), eq(amazonLinks.kind, "refund"), eq(amazonLinks.status, "confirmed"))).run();
+      if (this.materialChange(current.data, data)) tx.update(amazonLinks).set({ status: "needs_review" }).where(and(eq(amazonLinks.orderId, order.id), eq(amazonLinks.status, "confirmed"))).run();
+      tx.insert(amazonHistory).values({ orderId: order.id, action: "money-reviewed", detail: { revisionId: revision.id, before: current.data, after: data, evidence: input.evidence } }).run();
     });
   }
 

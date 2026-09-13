@@ -1,4 +1,4 @@
-import { amazonOrderSchema, type AmazonOrder, type AmazonLinkInput } from "./contracts/amazon-orders";
+import { amazonOrderSchema, type AmazonOrder, type AmazonLinkInput, type AmazonMoneyReview } from "./contracts/amazon-orders";
 
 export type OrderRow = { id: number; data: AmazonOrder; revisionId: number; needsReview: boolean };
 export type Link = Omit<AmazonLinkInput, "status"> & { id: number; status: AmazonLinkInput["status"] | "needs_review" };
@@ -7,7 +7,7 @@ export type Mapping = { brand: string; lastFour: string; accountId: number };
 export type AmazonSnapshot = { orders: OrderRow[]; links: Link[]; transactions: BankRow[]; mappings: Mapping[] };
 export const sum = (values: number[]) => values.reduce((a, b) => a + b, 0);
 export function remaining(order: OrderRow, links: Link[], kind: "purchase" | "refund") {
-  const total = kind === "purchase" ? order.data.cardMinor : order.data.refundMinor;
+  const total = kind === "purchase" ? order.data.cardMinor : (order.data.refundMinor === undefined ? undefined : order.data.refundMinor - balanceRefund(order.data));
   return total === undefined ? undefined : total - sum(links.filter(l => l.orderId === order.id && l.kind === kind && l.status === "confirmed").map(l => l.amountMinor));
 }
 export function orderStatus(order: OrderRow, links: Link[]) {
@@ -45,6 +45,16 @@ export function mergeOrder(previous: AmazonOrder, incoming: AmazonOrder) {
     if (key in previous && JSON.stringify(previous[key as keyof AmazonOrder]) !== JSON.stringify(value) && !(key === "refundMinor" && Number(value) >= (previous.refundMinor ?? 0)) && !(key === "incomplete" && value === false)) conflict = true;
     merged[key] = value;
   }
+  if (previous.refundBalanceMinor !== undefined && incoming.refundBalanceMinor === undefined) {
+    const importedBalance = (payments: AmazonOrder["payments"]) => sum((payments ?? []).filter(p => p.kind === "refund" && p.destination === "ElectronicGiftCertificate").map(p => p.amountMinor));
+    const recorded = importedBalance(merged.payments as AmazonOrder["payments"]);
+    const newEvidence = Math.max(0, recorded - importedBalance(previous.payments));
+    const refundGrowth = Math.max(0, Number(merged.refundMinor ?? 0) - (previous.refundMinor ?? 0));
+    // An export may catch up with a manually recorded refund. Only growth beyond the
+    // reviewed total can add credit; otherwise the same refund would be counted twice.
+    merged.refundBalanceMinor = Math.max(previous.refundBalanceMinor, recorded, previous.refundBalanceMinor + Math.min(newEvidence, refundGrowth));
+    if (recorded > previous.refundBalanceMinor + refundGrowth) conflict = true;
+  }
   return { data: amazonOrderSchema.parse(merged), conflict };
 }
 
@@ -72,7 +82,7 @@ export function validateLink(snapshot: AmazonSnapshot, input: AmazonLinkInput) {
   if (transaction.status !== "posted" || order.data.currencyCode !== transaction.currencyCode || (input.kind === "purchase" ? transaction.amountMinor >= 0 : transaction.amountMinor <= 0)) throw new Error("Choose a posted transaction with matching currency and direction");
   const others = snapshot.links.filter(l => !(l.orderId === input.orderId && l.transactionId === input.transactionId && l.kind === input.kind));
   const left = remaining(order, others, input.kind);
-  if (left === undefined || input.amountMinor > left) throw new Error("Allocation exceeds remaining order amount or order amount is unknown");
+  if (left === undefined || input.amountMinor > left) throw new Error(left === undefined ? "Record the order funding or issued refund amount before linking a bank transaction" : "Link exceeds the remaining amount available for bank matching");
   if (input.amountMinor + sum(others.filter(l => l.transactionId === input.transactionId && l.status === "confirmed").map(l => l.amountMinor)) > Math.abs(transaction.amountMinor)) throw new Error("Allocation exceeds transaction amount");
   if (new Set(input.allocations.map(a => a.itemId)).size !== input.allocations.length || sum(input.allocations.map(a => a.amountMinor)) > input.amountMinor) throw new Error("Invalid item allocation total");
   for (const allocation of input.allocations) {
@@ -83,6 +93,30 @@ export function validateLink(snapshot: AmazonSnapshot, input: AmazonLinkInput) {
 }
 
 export function itemBreakdown(order: OrderRow, link: Link) {
-  const whole = !order.data.incomplete && link.kind === "purchase" && link.amountMinor === order.data.totalMinor && !order.data.giftCardMinor;
-  return { items: whole ? order.data.items ?? [] : (order.data.items ?? []).filter(i => link.allocations.some(a => a.itemId === i.id)).map(i => ({ ...i, amountMinor: link.allocations.find(a => a.itemId === i.id)!.amountMinor })), deliveryMinor: whole ? order.data.deliveryMinor ?? 0 : 0, giftWrapMinor: whole ? order.data.giftWrapMinor ?? 0 : 0, discountMinor: whole ? order.data.discountMinor ?? 0 : 0, unresolvedMinor: whole && !order.data.incomplete ? 0 : link.amountMinor - sum(link.allocations.map(a => a.amountMinor)) };
+  const whole = !order.data.incomplete && link.kind === "purchase" && link.amountMinor === order.data.cardMinor;
+  return { wholeOrder: whole, balanceMinor: whole ? order.data.giftCardMinor ?? 0 : 0, items: whole ? order.data.items ?? [] : (order.data.items ?? []).filter(i => link.allocations.some(a => a.itemId === i.id)).map(i => ({ ...i, amountMinor: link.allocations.find(a => a.itemId === i.id)!.amountMinor })), deliveryMinor: whole ? order.data.deliveryMinor ?? 0 : 0, giftWrapMinor: whole ? order.data.giftWrapMinor ?? 0 : 0, discountMinor: whole ? order.data.discountMinor ?? 0 : 0, unresolvedMinor: whole && !order.data.incomplete ? 0 : link.amountMinor - sum(link.allocations.map(a => a.amountMinor)) };
+}
+
+/** Balance refunds reduce purchase spending, but cannot satisfy a bank-receipt link. */
+export function balanceRefund(order: AmazonOrder) {
+  return order.refundBalanceMinor ?? sum((order.payments ?? []).filter(p => p.kind === "refund" && p.destination === "ElectronicGiftCertificate").map(p => p.amountMinor));
+}
+export function purchaseSpending(order: AmazonOrder) {
+  return order.totalMinor === undefined ? undefined : order.totalMinor - (order.refundMinor ?? 0);
+}
+export function reviewedMoney(order: AmazonOrder, input: AmazonMoneyReview): AmazonOrder {
+  const next = { ...order };
+  if (input.funding) {
+    if (order.totalMinor === undefined) throw new Error("Record the order value before reviewing funding");
+    if (input.funding.balanceMinor > order.totalMinor) throw new Error("Amazon balance funding exceeds the order value");
+    next.giftCardMinor = input.funding.balanceMinor;
+    next.cardMinor = order.totalMinor - input.funding.balanceMinor;
+    // Funding review clears incompleteness only when the purchased items and adjustments reconcile too.
+    if (next.items?.length && next.deliveryMinor !== undefined && next.discountMinor !== undefined && sum(next.items.map(i => i.amountMinor)) + next.deliveryMinor + (next.giftWrapMinor ?? 0) - next.discountMinor === next.totalMinor) next.incomplete = false;
+  }
+  if (input.refunds) {
+    next.refundMinor = input.refunds.totalMinor;
+    if (input.refunds.balanceMinor !== undefined) next.refundBalanceMinor = input.refunds.balanceMinor;
+  }
+  return amazonOrderSchema.parse(next);
 }

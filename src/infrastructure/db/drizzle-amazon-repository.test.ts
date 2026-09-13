@@ -175,3 +175,34 @@ test("rejecting a pending revision preserves accepted data, links and an auditab
   expect(repository.snapshot().orders[0]!.needsReview).toBe(false);
   expect(() => repository.reviewRevision(pending.id, true)).toThrow("pending revision");
 });
+
+
+test("reviewed money is revision checked, audited, repeatable and leaves bank cash flow untouched", async () => {
+  const { repository, ingest, bank, db } = setup();
+  const t = bank(-2000);
+  const dashboard = new DrizzleDashboardQueryRepository(db);
+  const before = await dashboard.summarizeTransactions();
+  await ingest(sampleFile([sampleOrder({cardMinor:undefined,giftCardMinor:undefined,incomplete:true})]));
+  const initial=repository.snapshot().orders[0]!;
+  const input={orderId:initial.id,revisionId:initial.revisionId,evidence:"Order summary confirms balance 6.19",funding:{balanceMinor:619}};
+  const routes=createAmazonRoutes(repository);
+  const request=(body:unknown)=>new Request("http://localhost/api/amazon-orders/money",{method:"POST",body:JSON.stringify(body)});
+  expect((await routes["/api/amazon-orders/money"].POST(request({...input,evidence:""}))).status).toBe(400);
+  expect((await routes["/api/amazon-orders/money"].POST(request(input))).status).toBe(200);
+  expect((await routes["/api/amazon-orders/money"].POST(request(input))).status).toBe(400);
+  const current=repository.snapshot().orders[0]!;
+  repository.reviewMoney({...input,revisionId:current.revisionId});
+  expect(repository.evidence(initial.id).revisions).toHaveLength(2);
+  repository.reviewLink({orderId:initial.id,transactionId:t.id,kind:"purchase",amountMinor:2000,allocations:[],status:"confirmed"});
+  repository.reviewMoney({orderId:initial.id,revisionId:current.revisionId,evidence:"Issued return confirmation",refunds:{totalMinor:399,balanceMinor:399}});
+  const detail=queryAmazonOrder(repository,initial.id);
+  expect(detail.spendingMinor).toBe(2220);
+  expect(detail.refundRemainingMinor).toBe(0);
+  expect(detail.balanceRefundMinor).toBe(399);
+  expect(detail.links[0]!.status).toBe("confirmed");
+  expect(repository.evidence(initial.id).history.some(h=>h.action==="money-reviewed")).toBe(true);
+  expect(queryAmazonOrders(repository,{}).spending).toEqual([{currencyCode:"GBP",amountMinor:2220,refundsMinor:399,unknownOrders:0}]);
+  expect(await dashboard.summarizeTransactions()).toEqual(before);
+  await ingest(sampleFile([sampleOrder({cardMinor:undefined,giftCardMinor:undefined,incomplete:true})]),"repeated-export");
+  expect(queryAmazonOrder(repository,initial.id).spendingMinor).toBe(2220);
+});

@@ -474,3 +474,8 @@ export const schema = {
   transactionLinks,
   cashFlowExclusions,
 };
+
+export const amazonSettings = sqliteTable("amazon_settings", {
+  id: integer("id").primaryKey(),
+  trackingStart: text("tracking_start").notNull(),
+});

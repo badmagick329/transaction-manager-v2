@@ -23,7 +23,7 @@ const amountInput = (value: string) => {
 
 export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
   const [search, setSearch] = useState(() => window.location.pathname === "/amazon-orders" ? window.location.search : "");
-  const [list, setList] = useState<AmazonOrderList>({ orders: [], total: 0, spending: [] });
+  const [list, setList] = useState<AmazonOrderList>({ orders: [], total: 0, spending: [], trackingStart: "2024-01-01" });
   const [detail, setDetail] = useState<AmazonOrderDetail | null>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -74,8 +74,9 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
       <label className="text-sm">To <input aria-label="Orders to" type="date" className={field} value={query.get("to") ?? ""} onChange={e => change("to", e.target.value)} /></label>
       <select aria-label="Matching status" className={field} value={query.get("status") ?? ""} onChange={e => change("status", e.target.value)}><option value="">All statuses</option>{["unmatched", "partially-matched", "matched", "needs-review"].map(s => <option key={s} value={s}>{s.replaceAll("-", " ")}</option>)}</select>
     </div>
+    <details className="text-sm text-neutral-400"><summary className="cursor-pointer">Tracking from {list.trackingStart}</summary><form className="mt-3 flex flex-wrap items-center gap-3" onSubmit={event => { event.preventDefault(); const date = String(new FormData(event.currentTarget).get("trackingStart")); void action("/settings", { trackingStart: date }); }}><label>Tracking starts on <input key={list.trackingStart} name="trackingStart" aria-label="Tracking starts on" type="date" required className={field} defaultValue={list.trackingStart} /></label><Button variant="outline" disabled={busy}>Save cutoff</Button><p className="w-full">Older orders stay in your history, outside the review queue and matching suggestions.</p></form><label className="mt-3 flex items-center gap-2"><input type="checkbox" checked={query.get("includeOlder") === "true"} onChange={e => change("includeOlder", e.target.checked ? "true" : "")} />Include older orders in this list and its totals</label></details>
     {list.spending.map(s => <div key={s.currencyCode} className="rounded border border-neutral-800 p-3 text-sm"><p>Purchase spending after recorded refunds: {formatMoney(s.amountMinor, s.currencyCode)}</p><p className="text-neutral-400">Issued refunds: {formatMoney(s.refundsMinor, s.currencyCode)}. Covers all filtered orders, across every page. Separate from bank cash flow.{s.unknownOrders > 0 && ` Excludes ${s.unknownOrders} orders with unknown values.`}</p></div>)}
-    {!list.total && <p className="rounded-xl border border-neutral-800 p-6 text-neutral-400">No orders found. Supply order-details PDFs through the agent-assisted import workflow.</p>}
+    {!list.total && <p className="rounded-xl border border-neutral-800 p-6 text-neutral-400">No orders match these filters.</p>}
     <div className="grid grid-cols-1 gap-2">{list.orders.map(o => <button key={o.id} aria-haspopup="dialog" className={`min-w-0 w-full rounded-xl border p-4 text-left ${String(o.id) === selected ? "border-sky-500" : "border-neutral-800"}`} onClick={event => { opener.current = event.currentTarget; change("order", String(o.id), true); }}>
       <span className="flex flex-wrap justify-between gap-2"><strong>{o.data.orderId}</strong><span>{o.data.totalMinor === undefined ? "Total unknown" : formatMoney(o.data.totalMinor, o.data.currencyCode)}</span></span>
       {!!o.data.refundMinor && <span className="block text-sm text-emerald-300">Refunded {formatMoney(o.data.refundMinor, o.data.currencyCode)} · Spending after refund {o.spendingMinor === undefined ? "Unknown" : formatMoney(o.spendingMinor, o.data.currencyCode)}</span>}
@@ -139,7 +140,8 @@ function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDeta
   return <article className="min-w-0 break-words space-y-5 rounded-xl border border-neutral-700 p-4 sm:p-6">
     <h2 className="text-xl font-semibold">Order {data.orderId}</h2>
     <p className="text-sm text-neutral-400">{data.marketplace} · {data.orderDate} · Payment: {paymentStatus}</p>
-    {data.incomplete && <p className="text-sm text-amber-300">Some order details are missing. Check how you paid below; any missing delivery or discount details still need an updated order document.</p>}
+    {order.outsideTracking && <p className="text-sm text-neutral-400">Before your tracking start date. Kept as history; no payment review is required.</p>}
+    {data.incomplete && !order.outsideTracking && <p className="text-sm text-amber-300">Some order details are missing. Check how you paid below; any missing delivery or discount details still need an updated order document.</p>}
     <ul className="divide-y divide-neutral-800">{data.items?.map(i => <li key={i.id} className="flex justify-between gap-4 py-3"><span>{i.description}{i.quantity !== undefined && <span className="text-neutral-400"> · Quantity {i.quantity}</span>}{i.shipment && <small className="block text-neutral-400">Shipment: {i.shipment}</small>}{i.returned && <small className="block text-amber-300">Returned</small>}</span><span className="whitespace-nowrap">{money(i.amountMinor)}</span></li>)}</ul>
     <dl className="grid grid-cols-2 gap-2 rounded bg-neutral-900 p-3 text-sm">{([
       ["Order total", data.totalMinor], ["Paid from Amazon balance", data.giftCardMinor], ["Paid by card", data.cardMinor], ["Refunds for this order", data.refundMinor], ["Order cost after refunds", order.spendingMinor],

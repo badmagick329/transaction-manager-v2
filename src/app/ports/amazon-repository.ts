@@ -7,6 +7,8 @@ export type AmazonEvidence = {
   history: Array<{ id: number; orderId: number | null; action: string; detail: unknown; createdAt: string }>;
 };
 export interface AmazonRepository {
+  trackingStart(): string;
+  saveTrackingStart(date: string): void;
   snapshot(): AmazonSnapshot;
   evidence(orderId: number): AmazonEvidence;
   importFile(input: { fileName: string; fileHash: string; importFile: AmazonImport }): Promise<ImportBatchSummary>;

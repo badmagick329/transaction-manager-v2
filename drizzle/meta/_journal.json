@@ -141,6 +141,13 @@
       "when": 1789256668795,
       "tag": "0019_reflective_champions",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1789321573650,
+      "tag": "0020_tiny_valkyrie",
+      "breakpoints": true
     }
   ]
 }

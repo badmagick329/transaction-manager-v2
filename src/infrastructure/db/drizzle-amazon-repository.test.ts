@@ -223,3 +223,34 @@ test("transaction previews batch confirmed purchases and omit source history", a
   expect(JSON.stringify(data)).not.toContain("Purchased items only:");
   expect((await route(new Request("http://localhost/api/amazon-orders/previews?ids=-1"))).status).toBe(400);
 });
+
+
+test("tracking cutoff preserves history, excludes old review and totals, and removes old matching competitors", async () => {
+  const { repository, ingest, bank, db } = setup();
+  const old = sampleOrder({ orderDate: "2023-12-31" });
+  const current = sampleOrder({ orderId: "203-1111111-1111111", orderDate: "2024-01-01" });
+  await ingest(sampleFile([old, current]));
+  const transaction = bank(-2619);
+  db.update(transactions).set({ transactionDate: "2024-01-02" }).run();
+  const rows = repository.snapshot().orders;
+  const oldId = rows.find(o => o.data.orderId === old.orderId)!.id;
+  const currentId = rows.find(o => o.data.orderId === current.orderId)!.id;
+  expect(queryAmazonOrders(repository, {}).orders.map(o => o.id)).toEqual([currentId]);
+  expect(queryAmazonOrders(repository, {}).spending[0]!.amountMinor).toBe(2619);
+  expect(queryAmazonOrders(repository, { includeOlder: true }).total).toBe(2);
+  expect(queryAmazonOrder(repository, oldId).candidates).toEqual([]);
+  expect(queryAmazonOrder(repository, currentId).candidates[0]!.unique).toBe(true);
+  repository.reviewLink({ orderId: currentId, transactionId: transaction.id, kind: "purchase", amountMinor: 2619, allocations: [], status: "confirmed" });
+  repository.saveTrackingStart("2025-01-01");
+  expect(new DrizzleAmazonRepository(db).trackingStart()).toBe("2025-01-01");
+  expect(queryAmazonOrders(repository, {}).total).toBe(0);
+  expect(queryAmazonOrder(repository, currentId).links[0]!.status).toBe("confirmed");
+  expect(repository.snapshot().transactions).toHaveLength(1);
+  expect(repository.snapshot().orders).toHaveLength(2);
+  const routes = createAmazonRoutes(repository);
+  const invalid = await routes["/api/amazon-orders/settings"].POST(new Request("http://localhost/api/amazon-orders/settings", { method: "POST", body: JSON.stringify({ trackingStart: "not-a-date" }) }));
+  expect(invalid.status).toBe(400);
+  const saved = await routes["/api/amazon-orders/settings"].POST(new Request("http://localhost/api/amazon-orders/settings", { method: "POST", body: JSON.stringify({ trackingStart: "2023-01-01" }) }));
+  expect(saved.status).toBe(200);
+  expect(queryAmazonOrders(repository, {}).total).toBe(2);
+});

@@ -4,7 +4,7 @@ import { mergeOrder, validateLink, reviewedMoney, balanceRefund, type Mapping, t
 import { amazonImportSchema, amazonMoneyReviewSchema, type AmazonMoneyReview, type AmazonImport, type AmazonLinkInput } from "../../app/contracts/amazon-orders";
 import type { AmazonRepository } from "../../app/ports/amazon-repository";
 import type { AppDatabase } from "./client";
-import { accounts, amazonOrders, amazonRevisions, amazonLinks, amazonMappings, amazonHistory, transactions, importBatches, importAttempts } from "./schema";
+import { amazonSettings, accounts, amazonOrders, amazonRevisions, amazonLinks, amazonMappings, amazonHistory, transactions, importBatches, importAttempts } from "./schema";
 
 const fingerprint = (value: unknown): string => {
   const canonical = (v: any): any => Array.isArray(v) ? v.map(canonical) : v && typeof v === "object" ? Object.fromEntries(Object.keys(v).sort().map(k => [k, canonical(v[k])])) : v;
@@ -14,6 +14,14 @@ const fingerprint = (value: unknown): string => {
 /** Purchase snapshots deliberately share no transaction-creation or cash-flow mutation path. */
 export class DrizzleAmazonRepository implements AmazonRepository {
   constructor(private readonly db: AppDatabase) {}
+
+  trackingStart(): string {
+    return this.db.select().from(amazonSettings).where(eq(amazonSettings.id, 1)).get()!.trackingStart;
+  }
+
+  saveTrackingStart(date: string): void {
+    this.db.update(amazonSettings).set({ trackingStart: date }).where(eq(amazonSettings.id, 1)).run();
+  }
 
   snapshot(): AmazonSnapshot {
     // Browsing needs accepted facts, not every revision's source text and incoming snapshot.

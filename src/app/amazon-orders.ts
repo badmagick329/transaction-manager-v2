@@ -22,9 +22,18 @@ export function mergeOrder(previous: AmazonOrder, incoming: AmazonOrder) {
   const merged: Record<string, unknown> = { ...previous };
   for (const [key, value] of Object.entries(incoming)) {
     if (value === undefined) continue;
+    // A less detailed export does not make already-reconciled PDF evidence incomplete.
+    if (key === "incomplete" && value === true && previous.incomplete === false) continue;
     if (key === "items" || key === "payments") {
       const before = (previous[key] ?? []) as Array<{ id: string } & Record<string, unknown>>;
-      const next = value as Array<{ id: string } & Record<string, unknown>>;
+      // PDF and CSV adapters can identify the same line differently. Reuse a known ID only
+      // for an unambiguous exact description, keeping allocations attached to that item.
+      const next = (value as Array<{ id: string } & Record<string, unknown>>).map(item => {
+        if (key !== "items" || before.some(old => old.id === item.id)) return item;
+        const matches = before.filter(old => old.description === item.description);
+        const incomingMatches = (value as typeof before).filter(other => other.description === item.description);
+        return matches.length === 1 && incomingMatches.length === 1 && !(value as typeof before).some(other => other.id === matches[0]!.id) ? { ...item, id: matches[0]!.id } : item;
+      });
       merged[key] = [...before.map(old => {
         const found = next.find(n => n.id === old.id);
         if (!found) return old;

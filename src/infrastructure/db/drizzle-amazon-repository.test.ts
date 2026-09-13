@@ -48,6 +48,22 @@ test("migrations, imports, duplicate snapshots, reviewed links and unchanged cas
   expect(db.select().from(amazonHistory).all().length).toBeGreaterThan(3);
 });
 
+test("CSV identities preserve confirmed PDF item links and repeated snapshots", async () => {
+  const { repository, ingest, bank } = setup();
+  const payment = bank(-2619);
+  await ingest();
+  const orderId = repository.snapshot().orders[0]!.id;
+  repository.reviewLink({ orderId, transactionId: payment.id, kind: "purchase", amountMinor: 2619, allocations: [{ itemId: "drink", amountMinor: 2220 }, { itemId: "lanyard", amountMinor: 399 }], status: "confirmed" });
+  const csv = sampleFile([sampleOrder({ items: sampleOrder().items!.map((item, index) => ({ ...item, id: `csv-${index}`, quantity: 1 })) })]);
+  await ingest(csv, "csv-first");
+  await ingest(csv, "csv-repeat");
+  const snapshot = repository.snapshot();
+  expect(snapshot.orders).toHaveLength(1);
+  expect(snapshot.orders[0]!.data.items!.map(i => i.id)).toEqual(["drink", "lanyard"]);
+  expect(snapshot.links[0]!.status).toBe("confirmed");
+  expect(snapshot.transactions).toHaveLength(1);
+});
+
 test("refund additions preserve confirmation; conflicts require review and then invalidate affected links", async () => {
   const { db, repository, ingest, bank } = setup();
   const t = bank(-2619); await ingest();

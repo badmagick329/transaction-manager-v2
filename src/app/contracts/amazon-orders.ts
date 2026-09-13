@@ -12,7 +12,7 @@ export const amazonOrderSchema = z.object({
   currencyCode: z.string().regex(/^[A-Z]{3}$/), incomplete: z.boolean().default(false),
   items: z.array(amazonItemSchema).optional(),
   subtotalMinor: money.optional(), subtotalExcludesVat: z.boolean().optional(), vatMinor: money.optional(),
-  deliveryMinor: money.optional(), discountMinor: money.optional(), totalMinor: money.optional(),
+  deliveryMinor: money.optional(), giftWrapMinor: money.optional(), discountMinor: money.optional(), totalMinor: money.optional(),
   giftCardMinor: money.optional(), cardMinor: money.optional(), refundMinor: money.optional(),
   card: z.object({ brand: z.string().min(1), lastFour: z.string().regex(/^\d{4}$/) }).strict().optional(),
   payments: z.array(z.object({ id: z.string().min(1), kind: z.enum(["charge", "refund"]), amountMinor: money, date: date.optional(), destination: z.string().optional(), itemIds: z.array(z.string()).optional() }).strict()).optional(),
@@ -23,8 +23,8 @@ export const amazonOrderSchema = z.object({
   if (o.payments?.some(p => p.itemIds?.some(id => !o.items?.some(i => i.id === id))) && !o.incomplete) fail("Payment evidence must reference known item IDs");
   if (!o.incomplete && (!o.items?.length || o.totalMinor === undefined || o.cardMinor === undefined || o.giftCardMinor === undefined)) fail("Complete orders require items, total, gift-card and card amounts");
   if (o.totalMinor !== undefined && o.cardMinor !== undefined && o.giftCardMinor !== undefined && o.totalMinor !== o.cardMinor + o.giftCardMinor) fail("Total must equal card plus gift-card funding");
-  if (!o.incomplete && o.items && o.totalMinor !== o.items.reduce((n, i) => n + i.amountMinor, 0) + (o.deliveryMinor ?? 0) - (o.discountMinor ?? 0)) fail("Item line totals plus delivery minus discounts must equal total (item amounts include VAT)");
-  if (o.subtotalMinor !== undefined && o.totalMinor !== undefined && o.subtotalExcludesVat !== undefined && (!o.subtotalExcludesVat || o.vatMinor !== undefined) && o.subtotalMinor + (o.subtotalExcludesVat ? o.vatMinor! : 0) + (o.deliveryMinor ?? 0) - (o.discountMinor ?? 0) !== o.totalMinor) fail("Subtotal/VAT reconciliation failed");
+  if (!o.incomplete && o.items && o.totalMinor !== o.items.reduce((n, i) => n + i.amountMinor, 0) + (o.deliveryMinor ?? 0) + (o.giftWrapMinor ?? 0) - (o.discountMinor ?? 0)) fail("Item line totals plus delivery and gift wrap minus discounts must equal total (item amounts include VAT)");
+  if (o.subtotalMinor !== undefined && o.totalMinor !== undefined && o.subtotalExcludesVat !== undefined && (!o.subtotalExcludesVat || o.vatMinor !== undefined) && o.subtotalMinor + (o.subtotalExcludesVat ? o.vatMinor! : 0) + (o.deliveryMinor ?? 0) + (o.giftWrapMinor ?? 0) - (o.discountMinor ?? 0) !== o.totalMinor) fail("Subtotal/VAT reconciliation failed");
   if (o.refundMinor !== undefined && o.totalMinor !== undefined && o.refundMinor > o.totalMinor) fail("Refund exceeds order total");
 });
 export const amazonImportSchema = z.object({

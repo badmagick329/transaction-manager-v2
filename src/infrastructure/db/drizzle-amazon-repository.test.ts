@@ -64,6 +64,22 @@ test("CSV identities preserve confirmed PDF item links and repeated snapshots", 
   expect(snapshot.transactions).toHaveLength(1);
 });
 
+test("verified invoice adjustments complete an order without undoing its confirmed payment", async () => {
+  const { repository, ingest, bank } = setup();
+  const payment = bank(-4311);
+  const incomplete = sampleOrder({ totalMinor: 4311, cardMinor: 4311, incomplete: true, items: [{id:"adapter",description:"USB adapter",amountMinor:569},{id:"microphone",description:"Microphone",amountMinor:3799}] });
+  await ingest(sampleFile([incomplete]));
+  const orderId = repository.snapshot().orders[0]!.id;
+  repository.reviewLink({orderId,transactionId:payment.id,kind:"purchase",amountMinor:4311,allocations:[],status:"confirmed"});
+  await ingest(sampleFile([{...incomplete,incomplete:false,deliveryMinor:199,discountMinor:256}]),"invoice-correction");
+  const detail = queryAmazonOrder(repository,orderId);
+  expect(detail.status).toBe("matched");
+  expect(detail.links[0]!.status).toBe("confirmed");
+  expect(detail.links[0]!.breakdown).toMatchObject({deliveryMinor:199,discountMinor:256,unresolvedMinor:0});
+  expect(detail.links[0]!.breakdown.items).toHaveLength(2);
+  expect(repository.snapshot().transactions).toHaveLength(1);
+});
+
 test("refund additions preserve confirmation; conflicts require review and then invalidate affected links", async () => {
   const { db, repository, ingest, bank } = setup();
   const t = bank(-2619); await ingest();

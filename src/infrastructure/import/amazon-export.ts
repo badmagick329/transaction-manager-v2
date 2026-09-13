@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { strFromU8, unzipSync } from "fflate";
 import { amazonImportSchema, type AmazonOrder, type AmazonImport } from "../../app/contracts/amazon-orders";
+import { invoiceDocumentsSchema, parseInvoiceEvidence, invoiceAdjustments } from "./amazon-invoice-evidence";
 
 const historyPath = "Your Amazon Orders/Order History.csv";
 const refundPath = "Your Returns & Refunds/Refund Details.csv";
@@ -51,14 +52,17 @@ export function splitAmazonExport(file: AmazonImport): AmazonImport[] {
 }
 
 /** Converts retail purchase evidence only; no bank transactions or inferred gift/card splits are created. */
-export function parseAmazonExport(bytes: Uint8Array, fileName: string, capturedAt: string) {
-  const wanted = new Set([historyPath, refundPath, destinationPath]);
+export function parseAmazonExport(bytes: Uint8Array, fileName: string, capturedAt: string, invoiceText: unknown = []) {
+  const documents = invoiceDocumentsSchema.parse(invoiceText);
+  const wanted = new Set([historyPath, refundPath, destinationPath, ...documents.map(d => d.fileName)]);
   const entries = unzipSync(bytes, { filter: entry => {
     if (!wanted.has(entry.name)) return false;
     if (entry.originalSize > 16 * 1024 * 1024) throw new Error(`CSV exceeds 16 MB limit: ${entry.name}`);
     return true;
   } });
   if (!entries[historyPath]) throw new Error(`Archive is missing ${historyPath}`);
+  for (const doc of documents) if (!entries[doc.fileName] || hash(entries[doc.fileName]!) !== doc.fileHash) throw new Error(`Invoice source hash does not match archive: ${doc.fileName}`);
+  const invoiceEvidence = parseInvoiceEvidence(documents);
   const read = (path: string) => entries[path] ? parseAmazonCsv(strFromU8(entries[path]!)) : [];
   const rows = read(historyPath), refunds = read(refundPath), destinations = read(destinationPath);
   for (const [records, fields] of [[rows, ["Website", "Currency", "Order ID", "Order Date", "Order Status", "Original Quantity", "Payment Method Type", "ASIN", "Product Name", "Unit Price", "Unit Price Tax", "Total Amount", "Shipping Charge", "Total Discounts"]], [refunds, ["Website", "Currency", "Order ID", "Payment Status", "Reversal Status", "Disbursement Type", "Refund Amount", "Refund Date"]], [destinations, ["Order ID", "Currency Code", "Refund Amount", "Refund Destination"]]] as Array<[Row[], string[]]>) {
@@ -91,9 +95,11 @@ export function parseAmazonExport(bytes: Uint8Array, fileName: string, capturedA
           amountMinor: (exportMinor(r["Unit Price"]!) + exportMinor(r["Unit Price Tax"]!)) * quantity };
       });
       const totalMinor = group.reduce((n, r) => n + exportMinor(r["Total Amount"]!), 0);
-      const deliveryMinor = group.reduce((n, r) => n + exportMinor(r["Shipping Charge"]!), 0);
-      const discountMinor = -group.reduce((n, r) => n + exportMinor(r["Total Discounts"]!), 0);
-      const reconciled = items.reduce((n, i) => n + i.amountMinor, 0) + deliveryMinor - discountMinor === totalMinor;
+      const verifiedInvoices = invoiceAdjustments(invoiceEvidence.invoices, orderId, currencyCode, items.map((item, i) => ({ ...item, asin: group[i]!.ASIN! })), totalMinor);
+      const deliveryMinor = verifiedInvoices?.deliveryMinor ?? group.reduce((n, r) => n + exportMinor(r["Shipping Charge"]!), 0);
+      const discountMinor = verifiedInvoices?.discountMinor ?? -group.reduce((n, r) => n + exportMinor(r["Total Discounts"]!), 0);
+      const giftWrapMinor = verifiedInvoices?.giftWrapMinor ?? 0;
+      const reconciled = items.reduce((n, i) => n + i.amountMinor, 0) + deliveryMinor + giftWrapMinor - discountMinor === totalMinor;
       const methods = [...new Set(group.map(r => r["Payment Method Type"]))];
       const method = methods.length === 1 ? methods[0]! : "Mixed methods";
       const card = /^(MasterCard|Visa|American Express) - (\d{4})$/.exec(method);
@@ -102,6 +108,7 @@ export function parseAmazonExport(bytes: Uint8Array, fileName: string, capturedA
         items, totalMinor, incomplete: !reconciled || (!card && !giftOnly) };
       if (reconciled) { order.deliveryMinor = deliveryMinor; order.discountMinor = discountMinor; }
       else diagnostics.push({ orderId, reason: "Export line totals and adjustments do not reconcile; adjustments retained in evidence, order incomplete." });
+      if (giftWrapMinor) order.giftWrapMinor = giftWrapMinor;
       if (card) { order.card = { brand: card[1]!, lastFour: card[2]! }; order.cardMinor = totalMinor; order.giftCardMinor = 0; }
       else if (giftOnly) { order.cardMinor = 0; order.giftCardMinor = totalMinor; }
       else diagnostics.push({ orderId, reason: "Gift/card funding split or payment method unavailable; card and gift amounts left unknown." });
@@ -122,11 +129,11 @@ export function parseAmazonExport(bytes: Uint8Array, fileName: string, capturedA
       orders.push(amazonImportSchema.shape.orders.element.parse(order));
       completed.forEach(r => consumedRefunds.add(r));
       // Keep relevant source fields, excluding addresses, tracking numbers and recipient details.
-      evidence.push({ orderId, rows: group.map(r => Object.fromEntries(["ASIN", "Order Status", "Original Quantity", "Payment Method Type", "Product Name", "Ship Date", "Shipment Item Subtotal", "Shipment Item Subtotal Tax", "Shipping Charge", "Total Amount", "Total Discounts", "Unit Price", "Unit Price Tax"].map(k => [k, r[k]]))), refunds: completed, refundDestinations: destinations.filter(d => d["Order ID"] === orderId).map(d => ({ amount: d["Refund Amount"], destination: d["Refund Destination"], status: d["Refund Status"] })) });
+      evidence.push({ orderId, verifiedInvoices: verifiedInvoices?.invoices, rows: group.map(r => Object.fromEntries(["ASIN", "Order Status", "Original Quantity", "Payment Method Type", "Product Name", "Ship Date", "Shipment Item Subtotal", "Shipment Item Subtotal Tax", "Shipping Charge", "Total Amount", "Total Discounts", "Unit Price", "Unit Price Tax"].map(k => [k, r[k]]))), refunds: completed, refundDestinations: destinations.filter(d => d["Order ID"] === orderId).map(d => ({ amount: d["Refund Amount"], destination: d["Refund Destination"], status: d["Refund Status"] })) });
     } catch (error) { throw new Error(`Order ${orderId}: ${(error as Error).message}`); }
   }
   for (const r of refunds) if (!consumedRefunds.has(r)) diagnostics.push({ orderId: r["Order ID"], reason: "Refund not imported: no corresponding retail order or refund not completed." });
   const file = amazonImportSchema.parse({ kind: "amazon-orders", version: 1, source: { fileName, fileHash: hash(bytes), capturedAt,
-    evidence: JSON.stringify({ format: "Amazon Request My Data retail CSV", notes: "Shipment subtotals may repeat; totals use line Total Amount. Shipment dates are not payment dates. Digital orders, borrowed items, invoices and delivery media are not parsed.", diagnostics, orders: evidence }) }, orders });
-  return { file, report: { sourceRows: rows.length, cancelledRows, orders: orders.length, items: orders.reduce((n, o) => n + o.items!.length, 0), incompleteOrders: orders.filter(o => o.incomplete).length, refundEvents: consumedRefunds.size, diagnostics, excluded: ["Digital Content Orders.csv (different component/payment format)", "Digital Borrowed Items.csv", "Invoice PDFs", "Delivery photos", "Return requests/status (not proof of a completed refund)"] } };
+    evidence: JSON.stringify({ format: "Amazon Request My Data retail CSV", notes: "Shipment subtotals may repeat; totals use line Total Amount. CSV Shipping Charge can represent VAT rather than gross delivery. Gross delivery/promotions use reconciled invoice evidence when supplied. Shipment dates are not payment dates.", diagnostics, orders: evidence }) }, orders });
+  return { file, report: { sourceRows: rows.length, cancelledRows, orders: orders.length, items: orders.reduce((n, o) => n + o.items!.length, 0), incompleteOrders: orders.filter(o => o.incomplete).length, refundEvents: consumedRefunds.size, invoiceDiagnostics: invoiceEvidence.diagnostics, diagnostics, excluded: ["Digital Content Orders.csv (different component/payment format)", "Digital Borrowed Items.csv", "Unverified invoice pages", "Delivery photos", "Return requests/status (not proof of a completed refund)"] } };
 }

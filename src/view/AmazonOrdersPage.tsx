@@ -100,6 +100,7 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
 
 function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDetail; accounts: Account[]; busy: boolean; action: (path: string, body: unknown) => Promise<void> }) {
   const data = order.data;
+  const paymentStatus = order.remainingMinor === undefined ? "amount unknown" : order.remainingMinor === 0 ? "matched" : order.remainingMinor === data.cardMinor ? "unmatched" : "partially matched";
   const money = (v: number | undefined) => v === undefined ? "Unknown" : formatMoney(v, data.currencyCode);
   const [accountId, setAccountId] = useState(String(order.mapping?.accountId ?? ""));
   const [manualQuery, setManualQuery] = useState("");
@@ -125,10 +126,11 @@ function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDeta
   }
   return <article className="min-w-0 break-words space-y-5 rounded-xl border border-neutral-700 p-4 sm:p-6">
     <h2 className="text-xl font-semibold">Order {data.orderId}</h2>
-    <p className="text-sm text-neutral-400">{data.marketplace} · {data.orderDate} · Payment: {order.status.replaceAll("-", " ")}</p>
+    <p className="text-sm text-neutral-400">{data.marketplace} · {data.orderDate} · Payment: {paymentStatus}</p>
+    {data.incomplete && <p className="text-sm text-amber-300">Order details incomplete: some funding or adjustment details are unverified. Confirming a payment does not fill in missing order evidence.</p>}
     <ul className="divide-y divide-neutral-800">{data.items?.map(i => <li key={i.id} className="flex justify-between gap-4 py-3"><span>{i.description}{i.quantity !== undefined && <span className="text-neutral-400"> · Quantity {i.quantity}</span>}{i.shipment && <small className="block text-neutral-400">Shipment: {i.shipment}</small>}{i.returned && <small className="block text-amber-300">Returned</small>}</span><span className="whitespace-nowrap">{money(i.amountMinor)}</span></li>)}</ul>
     <dl className="grid grid-cols-2 gap-2 text-sm">{([
-      [data.subtotalExcludesVat ? "Subtotal (excluding VAT)" : "Subtotal", data.subtotalMinor], ["VAT (already included in item prices)", data.vatMinor], ["Delivery", data.deliveryMinor], ["Discount", data.discountMinor], ["Order value", data.totalMinor], ["Gift-card funding", data.giftCardMinor], ["Expected card amount", data.cardMinor], ["Unmatched card amount", order.remainingMinor], ["Reported refunds", data.refundMinor],
+      [data.subtotalExcludesVat ? "Subtotal (excluding VAT)" : "Subtotal", data.subtotalMinor], ["VAT (already included in item prices)", data.vatMinor], ["Delivery", data.deliveryMinor], ...(data.giftWrapMinor !== undefined ? [["Gift wrap", data.giftWrapMinor]] : []), ["Discount", data.discountMinor], ["Order value", data.totalMinor], ["Gift-card funding", data.giftCardMinor], ["Expected card amount", data.cardMinor], ["Unmatched card amount", order.remainingMinor], ["Reported refunds", data.refundMinor],
     ] as Array<[string, number | undefined]>).map(([label, value]) => <div key={label} className="contents"><dt className="text-neutral-400">{label}</dt><dd>{money(value)}</dd></div>)}</dl>
     {data.cardMinor === 0 && <p className="text-emerald-300">No card payment expected</p>}
     {!!order.refundRemainingMinor && <p className="text-amber-300">{data.payments?.some(p => p.kind === "refund" && p.destination === "ElectronicGiftCertificate") ? "Reported by Amazon — includes a gift-card refund; see destination below" : "Reported by Amazon — bank receipt unconfirmed"}: {money(order.refundRemainingMinor)}</p>}
@@ -151,7 +153,7 @@ function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDeta
 
 
 function RevisionDetails({ revision, current }: { revision: AmazonEvidence["revisions"][number]; current: AmazonOrder }) {
-  const fields: Array<[keyof AmazonOrder, string]> = [["orderDate", "Order date"], ["currencyCode", "Currency"], ["totalMinor", "Order value"], ["cardMinor", "Card amount"], ["giftCardMinor", "Gift-card funding"], ["refundMinor", "Reported refunds"], ["deliveryMinor", "Delivery"], ["discountMinor", "Discount"], ["vatMinor", "VAT"]];
+  const fields: Array<[keyof AmazonOrder, string]> = [["orderDate", "Order date"], ["currencyCode", "Currency"], ["totalMinor", "Order value"], ["cardMinor", "Card amount"], ["giftCardMinor", "Gift-card funding"], ["refundMinor", "Reported refunds"], ["deliveryMinor", "Delivery"], ["giftWrapMinor", "Gift wrap"], ["discountMinor", "Discount"], ["vatMinor", "VAT"]];
   const display = (data: AmazonOrder, key: keyof AmazonOrder) => data[key] === undefined ? "Unknown" : typeof data[key] === "number" ? formatMoney(data[key] as number, data.currencyCode) : String(data[key]);
   return <details><summary className="cursor-pointer">View order evidence{revision.status === "pending" ? " and proposed changes" : ""}</summary>
     <div className="mt-3 overflow-x-auto"><table className="w-full text-left text-sm"><thead><tr><th>Detail</th>{revision.status === "pending" && <th>Current</th>}<th>{revision.status === "pending" ? "Proposed" : "This revision"}</th></tr></thead><tbody>{fields.map(([key, label]) => <tr key={key} className="border-b border-neutral-800"><td className="py-2 text-neutral-400">{label}</td>{revision.status === "pending" && <td>{display(current, key)}</td>}<td className={revision.status === "pending" && display(current, key) !== display(revision.data, key) ? "text-amber-300" : ""}>{display(revision.data, key)}</td></tr>)}</tbody></table></div>

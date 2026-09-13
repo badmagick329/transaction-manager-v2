@@ -84,5 +84,5 @@ export function validateLink(snapshot: AmazonSnapshot, input: AmazonLinkInput) {
 
 export function itemBreakdown(order: OrderRow, link: Link) {
   const whole = !order.data.incomplete && link.kind === "purchase" && link.amountMinor === order.data.totalMinor && !order.data.giftCardMinor;
-  return { items: whole ? order.data.items ?? [] : (order.data.items ?? []).filter(i => link.allocations.some(a => a.itemId === i.id)).map(i => ({ ...i, amountMinor: link.allocations.find(a => a.itemId === i.id)!.amountMinor })), deliveryMinor: whole ? order.data.deliveryMinor ?? 0 : 0, discountMinor: whole ? order.data.discountMinor ?? 0 : 0, unresolvedMinor: whole && !order.data.incomplete ? 0 : link.amountMinor - sum(link.allocations.map(a => a.amountMinor)) };
+  return { items: whole ? order.data.items ?? [] : (order.data.items ?? []).filter(i => link.allocations.some(a => a.itemId === i.id)).map(i => ({ ...i, amountMinor: link.allocations.find(a => a.itemId === i.id)!.amountMinor })), deliveryMinor: whole ? order.data.deliveryMinor ?? 0 : 0, giftWrapMinor: whole ? order.data.giftWrapMinor ?? 0 : 0, discountMinor: whole ? order.data.discountMinor ?? 0 : 0, unresolvedMinor: whole && !order.data.incomplete ? 0 : link.amountMinor - sum(link.allocations.map(a => a.amountMinor)) };
 }

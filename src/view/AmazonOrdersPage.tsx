@@ -8,7 +8,7 @@ import type { Account } from "./types";
 import { Button } from "../components/ui/button";
 import { formatMoney } from "./formatters";
 
-const field = "rounded border border-neutral-700 bg-neutral-900 p-2 text-sm text-neutral-100";
+const field = "min-w-0 max-w-full rounded border border-neutral-700 bg-neutral-900 p-2 text-sm text-neutral-100";
 export async function amazonRequest<T>(path: string, body?: unknown): Promise<T> {
   const response = await fetch(`/api/amazon-orders${path}`, body === undefined ? undefined : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const result = await response.json();
@@ -52,7 +52,7 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
     finally { setBusy(false); }
   }
   const offset = Number(query.get("offset") ?? 0);
-  return <section className="space-y-5">
+  return <section className="min-w-0 space-y-5">
     <div className="flex justify-between gap-3"><div><h1 className="text-2xl font-semibold">Amazon orders</h1><p className="text-sm text-neutral-400">What you bought, and the payments behind it.</p></div><Button variant="outline" onClick={() => setVersion(v => v + 1)}>Refresh</Button></div>
     {error && <p role="alert" className="text-red-300">{error}</p>}
     <div className="flex flex-wrap gap-3">
@@ -62,10 +62,10 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
       <select aria-label="Matching status" className={field} value={query.get("status") ?? ""} onChange={e => change("status", e.target.value)}><option value="">All statuses</option>{["unmatched", "partially-matched", "matched", "needs-review"].map(s => <option key={s} value={s}>{s.replaceAll("-", " ")}</option>)}</select>
     </div>
     {!list.total && <p className="rounded-xl border border-neutral-800 p-6 text-neutral-400">No orders found. Supply order-details PDFs through the agent-assisted import workflow.</p>}
-    <div className="grid gap-2">{list.orders.map(o => <button key={o.id} className={`rounded-xl border p-4 text-left ${String(o.id) === selected ? "border-sky-500" : "border-neutral-800"}`} onClick={() => change("order", String(o.id), true)}>
+    <div className="grid grid-cols-1 gap-2">{list.orders.map(o => <button key={o.id} className={`min-w-0 w-full rounded-xl border p-4 text-left ${String(o.id) === selected ? "border-sky-500" : "border-neutral-800"}`} onClick={() => change("order", String(o.id), true)}>
       <span className="flex flex-wrap justify-between gap-2"><strong>{o.data.orderId}</strong><span>{o.data.totalMinor === undefined ? "Total unknown" : formatMoney(o.data.totalMinor, o.data.currencyCode)}</span></span>
       <span className="block text-sm text-neutral-400">{o.data.orderDate} · {o.status.replaceAll("-", " ")}{o.data.cardMinor === 0 ? " · No card payment expected" : ""}</span>
-      <span className="block truncate text-sm">{o.data.items?.map(i => i.description).join(" · ")}</span>
+      <span className="mt-1 block break-words text-sm text-neutral-300">{o.data.items?.map(i => i.description).join(" · ")}</span>
     </button>)}</div>
     {list.total > 30 && <div className="flex items-center gap-3"><Button variant="outline" disabled={!offset} onClick={() => change("offset", String(Math.max(0, offset - 30)))}>Previous</Button><span>{offset + 1}–{Math.min(offset + 30, list.total)} of {list.total}</span><Button variant="outline" disabled={offset + 30 >= list.total} onClick={() => change("offset", String(offset + 30))}>Next</Button></div>}
     {detail && <OrderDetail key={`${detail.id}-${version}`} order={detail} accounts={accounts} busy={busy} action={action} />}
@@ -97,7 +97,7 @@ function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDeta
       await action("/link", input);
     } catch (e) { setError((e as Error).message); }
   }
-  return <article className="space-y-5 rounded-xl border border-neutral-700 p-4 sm:p-6">
+  return <article className="min-w-0 break-words space-y-5 rounded-xl border border-neutral-700 p-4 sm:p-6">
     <h2 className="text-xl font-semibold">Order {data.orderId}</h2>
     <p className="text-sm text-neutral-400">{data.marketplace} · {data.orderDate} · Payment: {order.status.replaceAll("-", " ")}</p>
     <ul className="divide-y divide-neutral-800">{data.items?.map(i => <li key={i.id} className="flex justify-between gap-4 py-3"><span>{i.description}{i.quantity !== undefined && <span className="text-neutral-400"> · Quantity {i.quantity}</span>}{i.shipment && <small className="block text-neutral-400">Shipment: {i.shipment}</small>}{i.returned && <small className="block text-amber-300">Returned</small>}</span><span className="whitespace-nowrap">{money(i.amountMinor)}</span></li>)}</ul>

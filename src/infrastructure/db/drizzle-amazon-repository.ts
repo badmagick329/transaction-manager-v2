@@ -16,9 +16,12 @@ export class DrizzleAmazonRepository implements AmazonRepository {
   constructor(private readonly db: AppDatabase) {}
 
   snapshot(): AmazonSnapshot {
-    const revisions = this.db.select().from(amazonRevisions).all();
+    // Browsing needs accepted facts, not every revision's source text and incoming snapshot.
+    const revisions = this.db.select({ id: amazonRevisions.id, orderId: amazonRevisions.orderId, status: amazonRevisions.status, data: amazonRevisions.data }).from(amazonRevisions).all();
+    const byId = new Map(revisions.map(r => [r.id, r]));
+    const pending = new Set(revisions.filter(r => r.status === "pending").map(r => r.orderId));
     return {
-      orders: this.db.select().from(amazonOrders).all().map(o => ({ id: o.id, revisionId: o.revisionId!, data: revisions.find(r => r.id === o.revisionId)!.data, needsReview: revisions.some(r => r.orderId === o.id && r.status === "pending") })),
+      orders: this.db.select().from(amazonOrders).all().map(o => ({ id: o.id, revisionId: o.revisionId!, data: byId.get(o.revisionId!)!.data, needsReview: pending.has(o.id) })),
       links: this.db.select().from(amazonLinks).all(), mappings: this.db.select().from(amazonMappings).all(),
       transactions: this.db.select({ id: transactions.id, accountId: transactions.accountId, accountName: accounts.name, description: transactions.description, amountMinor: transactions.amountMinor, currencyCode: transactions.currencyCode, transactionDate: transactions.transactionDate, status: transactions.status }).from(transactions).innerJoin(accounts, eq(accounts.id, transactions.accountId)).all(),
     };

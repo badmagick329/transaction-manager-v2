@@ -59,18 +59,34 @@ export function mergeOrder(previous: AmazonOrder, incoming: AmazonOrder) {
 }
 
 export function candidates(snapshot: AmazonSnapshot) {
+  const allocated = new Map<number, number>();
+  const blocked = new Set<string>();
+  for (const link of snapshot.links) {
+    if (link.status === "confirmed") allocated.set(link.transactionId, (allocated.get(link.transactionId) ?? 0) + link.amountMinor);
+    if (["confirmed", "rejected", "needs_review"].includes(link.status)) blocked.add(`${link.orderId}:${link.transactionId}`);
+  }
+  const byAmount = new Map<string, BankRow[]>();
+  for (const transaction of snapshot.transactions) {
+    if (transaction.status !== "posted" || transaction.amountMinor >= 0 || !/amazon/i.test(transaction.description)) continue;
+    const key = `${transaction.currencyCode}:${Math.abs(transaction.amountMinor) - (allocated.get(transaction.id) ?? 0)}`;
+    const bucket = byAmount.get(key) ?? []; bucket.push(transaction); byAmount.set(key, bucket);
+  }
   const pairs = snapshot.orders.flatMap(order => {
     const amount = remaining(order, snapshot.links, "purchase");
     if (!amount || order.needsReview) return [];
     const end = new Date(`${order.data.orderDate}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 7);
+    const lastDate = end.toISOString().slice(0, 10);
     const mapping = order.data.card && snapshot.mappings.find(m => m.brand === order.data.card!.brand && m.lastFour === order.data.card!.lastFour);
-    return snapshot.transactions.filter(t => t.status === "posted" && /amazon/i.test(t.description) && t.amountMinor < 0 && t.currencyCode === order.data.currencyCode
-      && (!mapping || t.accountId === mapping.accountId) && t.transactionDate.slice(0, 10) >= order.data.orderDate && t.transactionDate.slice(0, 10) <= end.toISOString().slice(0, 10)
-      && Math.abs(t.amountMinor) - sum(snapshot.links.filter(l => l.transactionId === t.id && l.status === "confirmed").map(l => l.amountMinor)) === amount
-      && !snapshot.links.some(l => l.orderId === order.id && l.transactionId === t.id && (l.status === "rejected" || l.status === "confirmed" || l.status === "needs_review")))
+    return (byAmount.get(`${order.data.currencyCode}:${amount}`) ?? []).filter(t => (!mapping || t.accountId === mapping.accountId)
+      && t.transactionDate.slice(0, 10) >= order.data.orderDate && t.transactionDate.slice(0, 10) <= lastDate && !blocked.has(`${order.id}:${t.id}`))
       .map(transaction => ({ orderId: order.id, transaction, amountMinor: amount, reason: "Exact remaining amount, same currency, Amazon description, within seven days" }));
   });
-  return pairs.map(p => ({ ...p, unique: pairs.filter(q => q.orderId === p.orderId).length === 1 && pairs.filter(q => q.transaction.id === p.transaction.id).length === 1 }));
+  const orderCounts = new Map<number, number>(), transactionCounts = new Map<number, number>();
+  for (const pair of pairs) {
+    orderCounts.set(pair.orderId, (orderCounts.get(pair.orderId) ?? 0) + 1);
+    transactionCounts.set(pair.transaction.id, (transactionCounts.get(pair.transaction.id) ?? 0) + 1);
+  }
+  return pairs.map(p => ({ ...p, unique: orderCounts.get(p.orderId) === 1 && transactionCounts.get(p.transaction.id) === 1 }));
 }
 
 /** Allocation limits protect both sides of a many-to-many relationship without changing bank evidence. */

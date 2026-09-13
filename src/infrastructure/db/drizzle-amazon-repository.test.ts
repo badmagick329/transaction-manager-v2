@@ -1,3 +1,4 @@
+import { eq } from "drizzle-orm";
 import { expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { mkdir, writeFile, readFile } from "node:fs/promises";
@@ -10,7 +11,7 @@ import { DrizzleImportRepository } from "./drizzle-import-repository";
 import { DrizzleDashboardQueryRepository } from "./drizzle-dashboard-query-repository";
 import { accounts, sources, transactions, amazonRevisions, amazonOrders, amazonHistory } from "./schema";
 import { sampleFile, sampleOrder } from "../../app/amazon-order-fixtures";
-import { candidates } from "../../app/amazon-orders";
+import { candidates, searchOrderTransactions } from "../../app/amazon-orders";
 import { queryAmazonOrder, queryAmazonOrders } from "../../app/use-cases/query-amazon-orders";
 import { createAmazonRoutes } from "../http/amazon-routes";
 import { startWatchedImports } from "../imports/watched-imports";
@@ -253,4 +254,37 @@ test("tracking cutoff preserves history, excludes old review and totals, and rem
   const saved = await routes["/api/amazon-orders/settings"].POST(new Request("http://localhost/api/amazon-orders/settings", { method: "POST", body: JSON.stringify({ trackingStart: "2023-01-01" }) }));
   expect(saved.status).toBe(200);
   expect(queryAmazonOrders(repository, {}).total).toBe(2);
+});
+
+
+test("manual search ranks nearby Amazon aliases and exposes combined payment remainder", async () => {
+  const { repository, ingest, bank, db } = setup();
+  await ingest();
+  const order = repository.snapshot().orders[0]!;
+  const combined = bank(-3106);
+  db.update(transactions).set({ description: "AMZNMktplace*ABC", transactionDate: "2026-08-10" }).where(eq(transactions.id, combined.id)).run();
+  const far = bank(-2619);
+  db.update(transactions).set({ transactionDate: "2026-12-01" }).where(eq(transactions.id, far.id)).run();
+  const other = bank(-100);
+  db.update(transactions).set({ description: "Local shop" }).where(eq(transactions.id, other.id)).run();
+  expect(searchOrderTransactions(repository.snapshot(), order.id).transactions.map(t => t.id)).toEqual([combined.id, other.id, far.id]);
+  expect(searchOrderTransactions(repository.snapshot(), order.id, "amazon").transactions.map(t => t.id)).toEqual([combined.id, far.id]);
+  repository.reviewLink({ orderId: order.id, transactionId: combined.id, kind: "purchase", amountMinor: 2619, status: "confirmed", allocations: [] });
+  expect(searchOrderTransactions(repository.snapshot(), order.id).transactions[0]!.availableMinor).toBe(487);
+  expect(queryAmazonOrder(repository, order.id).links[0]!.transaction.availableMinor).toBe(3106);
+  const route = createAmazonRoutes(repository)["/api/amazon-orders/transactions"].GET;
+  const response = await route(new Request(`http://localhost/api/amazon-orders/transactions?orderId=${order.id}&q=amzn`));
+  expect(response.status).toBe(200);
+  expect((await response.json()).transactions[0].id).toBe(combined.id);
+  expect((await route(new Request("http://localhost/api/amazon-orders/transactions?orderId=bad"))).status).toBe(400);
+});
+
+test("AMZN descriptions receive exact suggestions and list action indicators", async () => {
+  const { repository, ingest, bank, db } = setup();
+  await ingest(); bank(-2619);
+  for (const description of ["AMZN*123", "amznmktplace*ABC", "Amazon Marketplace", "Amazon"]) {
+    db.update(transactions).set({ description }).run();
+    expect(candidates(repository.snapshot())[0]!.unique).toBe(true);
+    expect(queryAmazonOrders(repository, {}).orders[0]!.hasSuggestion).toBe(true);
+  }
 });

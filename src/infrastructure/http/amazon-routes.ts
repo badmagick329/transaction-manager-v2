@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { amazonDateSchema, amazonLinkSchema, amazonMoneyReviewSchema } from "../../app/contracts/amazon-orders";
-import { itemBreakdown } from "../../app/amazon-orders";
+import { itemBreakdown, searchOrderTransactions } from "../../app/amazon-orders";
 import type { AmazonRepository } from "../../app/ports/amazon-repository";
 import { queryAmazonOrder, queryAmazonOrders } from "../../app/use-cases/query-amazon-orders";
 
@@ -23,9 +23,8 @@ export function createAmazonRoutes(repository: AmazonRepository) {
     "/api/amazon-orders/money": { POST: handler(async request => { repository.reviewMoney(amazonMoneyReviewSchema.parse(await request.json())); return { ok: true }; }) },
     "/api/amazon-orders/mapping": { POST: handler(async request => { const input = z.object({ brand: z.string().min(1), lastFour: z.string().regex(/^\d{4}$/), accountId: id }).strict().parse(await request.json()); repository.saveMapping(input); return { ok: true }; }) },
     "/api/amazon-orders/transactions": { GET: handler(request => {
-      const input = z.object({ q: z.string().default(""), offset: z.coerce.number().int().nonnegative().default(0) }).strict().parse(Object.fromEntries(new URL(request.url).searchParams));
-      const rows = repository.snapshot().transactions.filter(t => `${t.id} ${t.description} ${t.accountName} ${t.transactionDate} ${(t.amountMinor / 100).toFixed(2)}`.toLowerCase().includes(input.q.toLowerCase())).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate));
-      return { total: rows.length, transactions: rows.slice(input.offset, input.offset + 30) };
+      const input = z.object({ orderId: id, q: z.string().default(""), offset: z.coerce.number().int().nonnegative().default(0) }).strict().parse(Object.fromEntries(new URL(request.url).searchParams));
+      return searchOrderTransactions(repository.snapshot(), input.orderId, input.q, input.offset);
     }) },
     "/api/amazon-orders/previews": { GET: handler(request => {
       const ids = z.array(id).min(1).max(100).parse((new URL(request.url).searchParams.get("ids") ?? "").split(","));

@@ -67,7 +67,7 @@ export function candidates(snapshot: AmazonSnapshot) {
   }
   const byAmount = new Map<string, BankRow[]>();
   for (const transaction of snapshot.transactions) {
-    if (transaction.status !== "posted" || transaction.amountMinor >= 0 || !/amazon/i.test(transaction.description)) continue;
+    if (transaction.status !== "posted" || transaction.amountMinor >= 0 || !isAmazonDescription(transaction.description)) continue;
     const key = `${transaction.currencyCode}:${Math.abs(transaction.amountMinor) - (allocated.get(transaction.id) ?? 0)}`;
     const bucket = byAmount.get(key) ?? []; bucket.push(transaction); byAmount.set(key, bucket);
   }
@@ -135,4 +135,26 @@ export function reviewedMoney(order: AmazonOrder, input: AmazonMoneyReview): Ama
     if (input.refunds.balanceMinor !== undefined) next.refundBalanceMinor = input.refunds.balanceMinor;
   }
   return amazonOrderSchema.parse(next);
+}
+
+
+export const isAmazonDescription = (description: string) => /amazon|amzn/i.test(description);
+
+/** Rank manual choices near the order without excluding combined payments or other merchants. */
+export function searchOrderTransactions(snapshot: AmazonSnapshot, orderId: number, q = "", offset = 0) {
+  const order = snapshot.orders.find(o => o.id === orderId);
+  if (!order) throw new Error("Order not found");
+  const allocated = new Map<number, number>();
+  for (const link of snapshot.links) if (link.status === "confirmed") allocated.set(link.transactionId, (allocated.get(link.transactionId) ?? 0) + link.amountMinor);
+  const query = q.trim().toLowerCase();
+  const day = (date: string) => Date.parse(date.slice(0, 10)) / 86400000;
+  const rank = (t: BankRow) => {
+    const delta = day(t.transactionDate) - day(order.data.orderDate);
+    return [isAmazonDescription(t.description) && delta >= 0 && delta <= 7 ? 0 : Math.abs(delta) <= 14 ? 1 : 2, Math.abs(delta), isAmazonDescription(t.description) ? 0 : 1];
+  };
+  const rows = snapshot.transactions.filter(t => !query || `${t.id} ${t.description} ${t.accountName} ${t.transactionDate} ${(t.amountMinor / 100).toFixed(2)}`.toLowerCase().includes(query) || (/^(amazon|amzn)$/.test(query) && isAmazonDescription(t.description))).sort((a,b) => {
+    const x = rank(a), y = rank(b);
+    return x[0]! - y[0]! || x[1]! - y[1]! || x[2]! - y[2]! || b.id-a.id;
+  }).map(t => ({ ...t, availableMinor: Math.abs(t.amountMinor) - (allocated.get(t.id) ?? 0) }));
+  return { total: rows.length, transactions: rows.slice(offset, offset + 30) };
 }

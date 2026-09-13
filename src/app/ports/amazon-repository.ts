@@ -9,6 +9,7 @@ export type AmazonEvidence = {
 export interface AmazonRepository {
   trackingStart(): string;
   saveTrackingStart(date: string): void;
+  setMatchingSkipped(orderId: number, skipped: boolean): void;
   snapshot(): AmazonSnapshot;
   evidence(orderId: number): AmazonEvidence;
   importFile(input: { fileName: string; fileHash: string; importFile: AmazonImport }): Promise<ImportBatchSummary>;

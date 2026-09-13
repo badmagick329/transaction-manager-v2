@@ -23,13 +23,24 @@ export class DrizzleAmazonRepository implements AmazonRepository {
     this.db.update(amazonSettings).set({ trackingStart: date }).where(eq(amazonSettings.id, 1)).run();
   }
 
+  /** Missing statements excuse matching, without asserting payment or changing purchase evidence. */
+  setMatchingSkipped(orderId: number, skipped: boolean): void {
+    this.db.transaction(tx => {
+      const order = tx.select().from(amazonOrders).where(eq(amazonOrders.id, orderId)).get();
+      if (!order) throw new Error("Order not found");
+      if (order.matchingSkipped === skipped) return;
+      tx.update(amazonOrders).set({ matchingSkipped: skipped }).where(eq(amazonOrders.id, orderId)).run();
+      tx.insert(amazonHistory).values({ orderId, action: skipped ? "payment-matching-skipped" : "payment-matching-resumed", detail: { reason: skipped ? "Statement unavailable" : null } }).run();
+    });
+  }
+
   snapshot(): AmazonSnapshot {
     // Browsing needs accepted facts, not every revision's source text and incoming snapshot.
     const revisions = this.db.select({ id: amazonRevisions.id, orderId: amazonRevisions.orderId, status: amazonRevisions.status, data: amazonRevisions.data }).from(amazonRevisions).all();
     const byId = new Map(revisions.map(r => [r.id, r]));
     const pending = new Set(revisions.filter(r => r.status === "pending").map(r => r.orderId));
     return {
-      orders: this.db.select().from(amazonOrders).all().map(o => ({ id: o.id, revisionId: o.revisionId!, data: byId.get(o.revisionId!)!.data, needsReview: pending.has(o.id) })),
+      orders: this.db.select().from(amazonOrders).all().map(o => ({ id: o.id, revisionId: o.revisionId!, data: byId.get(o.revisionId!)!.data, needsReview: pending.has(o.id), matchingSkipped: o.matchingSkipped })),
       links: this.db.select().from(amazonLinks).all(), mappings: this.db.select().from(amazonMappings).all(),
       transactions: this.db.select({ id: transactions.id, accountId: transactions.accountId, accountName: accounts.name, description: transactions.description, amountMinor: transactions.amountMinor, currencyCode: transactions.currencyCode, transactionDate: transactions.transactionDate, status: transactions.status }).from(transactions).innerJoin(accounts, eq(accounts.id, transactions.accountId)).all(),
     };

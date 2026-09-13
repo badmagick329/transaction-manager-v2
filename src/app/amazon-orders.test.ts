@@ -3,7 +3,7 @@ import { amazonImportSchema, amazonOrderSchema, type AmazonOrder } from "./contr
 import { balanceRefund, purchaseSpending, remaining, reviewedMoney, candidates, mergeOrder, validateLink, itemBreakdown, type AmazonSnapshot } from "./amazon-orders";
 
 import { sampleOrder, sampleFile } from "./amazon-order-fixtures";
-const snapshot = (): AmazonSnapshot => ({ orders: [{ id: 1, revisionId: 1, needsReview: false, data: sampleOrder() }], links: [], mappings: [], transactions: [{ id: 1, accountId: 1, accountName: "Current", description: "Amazon Marketplace", amountMinor: -2619, currencyCode: "GBP", transactionDate: "2026-08-09T15:00:00Z", status: "posted" }] });
+const snapshot = (): AmazonSnapshot => ({ orders: [{ id: 1, revisionId: 1, needsReview: false, matchingSkipped: false, data: sampleOrder() }], links: [], mappings: [], transactions: [{ id: 1, accountId: 1, accountName: "Current", description: "Amazon Marketplace", amountMinor: -2619, currencyCode: "GBP", transactionDate: "2026-08-09T15:00:00Z", status: "posted" }] });
 
 test("six PDF scenarios preserve totals, discounts, VAT, refund and gift-card funding", () => {
   const orders = [sampleOrder({ subtotalMinor: 2182, subtotalExcludesVat: true, vatMinor: 437 }),

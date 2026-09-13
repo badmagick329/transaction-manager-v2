@@ -1,0 +1,1 @@
+ALTER TABLE `amazon_orders` ADD `matching_skipped` integer DEFAULT false NOT NULL;

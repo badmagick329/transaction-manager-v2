@@ -11,9 +11,10 @@ const handler = (action: (request: Request) => unknown | Promise<unknown>) => as
 };
 export function createAmazonRoutes(repository: AmazonRepository) {
   return {
+    "/api/amazon-orders/matching": { POST: handler(async request => { const input = z.object({ orderId: id, skipped: z.boolean() }).strict().parse(await request.json()); repository.setMatchingSkipped(input.orderId, input.skipped); return { ok: true }; }) },
     "/api/amazon-orders": { GET: handler(request => {
       const values = Object.fromEntries(new URL(request.url).searchParams);
-      const filters = z.object({ includeOlder: z.enum(["true", "false"]).transform(v => v === "true").optional(), q: z.string().optional(), from: amazonDateSchema.optional(), to: amazonDateSchema.optional(), status: z.enum(["matched", "unmatched", "partially-matched", "needs-review"]).optional(), offset: z.coerce.number().int().nonnegative().optional(), limit: z.coerce.number().int().min(1).max(100).optional() }).strict().refine(v => !v.from || !v.to || v.from <= v.to, "From date must be on or before To date").parse(values);
+      const filters = z.object({ includeOlder: z.enum(["true", "false"]).transform(v => v === "true").optional(), q: z.string().optional(), from: amazonDateSchema.optional(), to: amazonDateSchema.optional(), status: z.enum(["matched", "unmatched", "partially-matched", "needs-review", "matching-skipped"]).optional(), offset: z.coerce.number().int().nonnegative().optional(), limit: z.coerce.number().int().min(1).max(100).optional() }).strict().refine(v => !v.from || !v.to || v.from <= v.to, "From date must be on or before To date").parse(values);
       return queryAmazonOrders(repository, filters);
     }) },
     "/api/amazon-orders/settings": { POST: handler(async request => { const input = z.object({ trackingStart: amazonDateSchema }).strict().parse(await request.json()); repository.saveTrackingStart(input.trackingStart); return { ok: true }; }) },

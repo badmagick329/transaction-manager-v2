@@ -27,6 +27,39 @@ function setup() {
   return { db, root, repository, ingest, bank, account };
 }
 
+test("skipped matching survives imports, preserves spending and resumes suggestions", async () => {
+  const { repository, ingest, bank } = setup();
+  const transaction = bank(-2619);
+  await ingest();
+  const orderId = repository.snapshot().orders[0]!.id;
+  const before = queryAmazonOrders(repository, {}).spending;
+  repository.setMatchingSkipped(orderId, true);
+  expect(queryAmazonOrders(repository, { status: "unmatched" }).total).toBe(0);
+  expect(queryAmazonOrders(repository, { status: "matching-skipped" }).total).toBe(1);
+  expect(queryAmazonOrders(repository, {}).spending).toEqual(before);
+  expect(queryAmazonOrder(repository, orderId).candidates).toEqual([]);
+  expect(() => repository.reviewLink({ orderId, transactionId: transaction.id, kind: "purchase", amountMinor: 2619, allocations: [], status: "confirmed" })).toThrow("Resume payment matching");
+  await ingest(sampleFile(), "repeat-after-skip");
+  expect(queryAmazonOrder(repository, orderId).matchingSkipped).toBe(true);
+  expect(repository.snapshot().transactions).toHaveLength(1);
+  repository.setMatchingSkipped(orderId, false);
+  expect(queryAmazonOrders(repository, { status: "unmatched" }).total).toBe(1);
+  expect(queryAmazonOrder(repository, orderId).candidates).toHaveLength(1);
+  expect(repository.evidence(orderId).history.slice(-2).map(h => h.action)).toEqual(["payment-matching-skipped", "payment-matching-resumed"]);
+});
+
+test("matching skip does not hide conflicting evidence and rejects invalid requests", async () => {
+  const { repository, ingest } = setup();
+  await ingest();
+  const orderId = repository.snapshot().orders[0]!.id;
+  const route = createAmazonRoutes(repository)["/api/amazon-orders/matching"].POST;
+  expect((await route(new Request("http://local/api/amazon-orders/matching", { method: "POST", body: JSON.stringify({ orderId, skipped: "yes" }) }))).status).toBe(400);
+  expect(() => repository.setMatchingSkipped(999, true)).toThrow("Order not found");
+  repository.setMatchingSkipped(orderId, true);
+  await ingest(sampleFile([sampleOrder({ orderDate: "2026-08-08" })]), "conflicting-date");
+  expect(queryAmazonOrders(repository, { status: "needs-review" }).total).toBe(1);
+});
+
 test("migrations, imports, duplicate snapshots, reviewed links and unchanged cash flow", async () => {
   const { db, repository, ingest, bank } = setup();
   const t = bank(-2619);

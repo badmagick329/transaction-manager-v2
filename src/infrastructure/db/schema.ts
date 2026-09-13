@@ -415,6 +415,7 @@ export const amazonOrders = sqliteTable("amazon_orders", {
   id: integer("id").primaryKey({ autoIncrement: true }),
   marketplace: text("marketplace").notNull(), orderId: text("order_id").notNull(),
   revisionId: integer("revision_id"),
+  matchingSkipped: integer("matching_skipped", { mode: "boolean" }).notNull().default(false),
 }, t => ({ identity: uniqueIndex("amazon_order_identity").on(t.marketplace, t.orderId) }));
 
 export const amazonRevisions = sqliteTable("amazon_revisions", {

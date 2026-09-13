@@ -1,6 +1,6 @@
 import { amazonOrderSchema, type AmazonOrder, type AmazonLinkInput, type AmazonMoneyReview } from "./contracts/amazon-orders";
 
-export type OrderRow = { id: number; data: AmazonOrder; revisionId: number; needsReview: boolean };
+export type OrderRow = { id: number; data: AmazonOrder; revisionId: number; needsReview: boolean; matchingSkipped: boolean };
 export type Link = Omit<AmazonLinkInput, "status"> & { id: number; status: AmazonLinkInput["status"] | "needs_review" };
 export type BankRow = { id: number; accountId: number; accountName: string; description: string; amountMinor: number; currencyCode: string; transactionDate: string; status: string };
 export type Mapping = { brand: string; lastFour: string; accountId: number };
@@ -12,6 +12,7 @@ export function remaining(order: OrderRow, links: Link[], kind: "purchase" | "re
 }
 export function orderStatus(order: OrderRow, links: Link[]) {
   if (order.needsReview || order.data.incomplete || links.some(l => l.orderId === order.id && l.status === "needs_review")) return "needs-review";
+  if (order.matchingSkipped) return "matching-skipped";
   const left = remaining(order, links, "purchase");
   return left === 0 ? "matched" : left === order.data.cardMinor ? "unmatched" : "partially-matched";
 }
@@ -73,7 +74,7 @@ export function candidates(snapshot: AmazonSnapshot) {
   }
   const pairs = snapshot.orders.flatMap(order => {
     const amount = remaining(order, snapshot.links, "purchase");
-    if (!amount || order.needsReview) return [];
+    if (!amount || order.needsReview || order.matchingSkipped) return [];
     const end = new Date(`${order.data.orderDate}T00:00:00Z`); end.setUTCDate(end.getUTCDate() + 7);
     const lastDate = end.toISOString().slice(0, 10);
     const mapping = order.data.card && snapshot.mappings.find(m => m.brand === order.data.card!.brand && m.lastFour === order.data.card!.lastFour);
@@ -95,6 +96,7 @@ export function validateLink(snapshot: AmazonSnapshot, input: AmazonLinkInput) {
   const transaction = snapshot.transactions.find(t => t.id === input.transactionId);
   if (!order || !transaction) throw new Error("Order or transaction not found");
   if (input.status !== "confirmed") return;
+  if (input.kind === "purchase" && order.matchingSkipped) throw new Error("Resume payment matching before confirming a bank payment");
   if (transaction.status !== "posted" || order.data.currencyCode !== transaction.currencyCode || (input.kind === "purchase" ? transaction.amountMinor >= 0 : transaction.amountMinor <= 0)) throw new Error("Choose a posted transaction with matching currency and direction");
   const others = snapshot.links.filter(l => !(l.orderId === input.orderId && l.transactionId === input.transactionId && l.kind === input.kind));
   const left = remaining(order, others, input.kind);

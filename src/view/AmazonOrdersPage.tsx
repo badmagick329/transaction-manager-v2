@@ -210,7 +210,7 @@ export function MoneyReview({ order, busy, action }: { order: AmazonOrderDetail;
       if (kind === "refunds" && refundBalance && amountInput(refundBalance) > amountInput(refund)) throw new Error("The amount returned to Amazon balance cannot exceed the total refund.");
       const failure = await action("/money", { orderId: order.id, revisionId: order.revisionId, evidence: notes[kind].trim(), ...values });
       if (failure) throw new Error(failure);
-      setMessages(current => ({ ...current, [kind]: { error: false, text: kind === "funding" ? "Payment details saved. You can now match the card payment below." : "Refund details saved. The order cost has been updated." } }));
+      setMessages(current => ({ ...current, [kind]: { error: false, text: kind === "funding" ? (cardValue === 0 ? "Payment details saved. All paid from Amazon balance; no bank payment to match." : "Payment details saved. You can now match the card payment below.") : "Refund details saved. The order cost has been updated." } }));
     } catch (e) { setMessages(current => ({ ...current, [kind]: { error: true, text: (e as Error).message } })); }
   }
   function source(kind: "funding" | "refunds") {
@@ -224,6 +224,7 @@ export function MoneyReview({ order, busy, action }: { order: AmazonOrderDetail;
     <section className="space-y-4 rounded-lg border border-neutral-700 p-4" aria-labelledby="amazon-payment-heading">
       <div><h3 id="amazon-payment-heading" className="font-semibold">How you paid</h3><p className="mt-1 text-sm text-neutral-400">Record the balance used when you placed this order. Amazon calls this the “Gift Card Amount”, even if the credit came from an earlier refund.</p></div>
       <div className="rounded bg-neutral-900 p-3 text-sm">Order total: <strong>{order.data.totalMinor === undefined ? "Unknown" : money(order.data.totalMinor)}</strong></div>
+      <Button type="button" variant="outline" disabled={busy || order.data.totalMinor === undefined} onClick={() => { setBalance((order.data.totalMinor! / 100).toFixed(2)); clear("funding"); }}>All paid from Amazon balance</Button>
       <label className="block space-y-1 text-sm"><span>Paid from Amazon balance ({order.data.currencyCode})</span><input className={`${field} block w-full sm:max-w-64`} inputMode="decimal" value={balance} onChange={e => { setBalance(e.target.value); clear("funding"); }} /><span className="block text-neutral-400">Use the Gift Card Amount shown on this order. Enter 0 if you paid entirely by card.</span></label>
       {cardValue !== undefined && cardValue >= 0 && <p className="text-sm">Remaining amount paid by card: <strong>{money(cardValue)}</strong></p>}
       {source("funding")}

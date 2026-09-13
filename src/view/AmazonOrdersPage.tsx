@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import type { AmazonOrderDetail, AmazonOrderList } from "../app/use-cases/query-amazon-orders";
 import type { BankRow } from "../app/amazon-orders";
 import type { AmazonEvidence } from "../app/ports/amazon-repository";
@@ -29,6 +30,9 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
   const [version, setVersion] = useState(0);
   const query = new URLSearchParams(search);
   const selected = query.get("order");
+  const opener = useRef<HTMLButtonElement | null>(null);
+  const panelBody = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { panelBody.current?.scrollTo({ top: 0 }); }, [selected]);
   useEffect(() => { const restore = () => setSearch(window.location.search); window.addEventListener("popstate", restore); return () => window.removeEventListener("popstate", restore); }, []);
   function change(key: string, value: string, push = false) {
     const next = new URLSearchParams(search);
@@ -52,6 +56,7 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
     finally { setBusy(false); }
   }
   const offset = Number(query.get("offset") ?? 0);
+  const selectedIndex = list.orders.findIndex(o => String(o.id) === selected);
   return <section className="min-w-0 space-y-5">
     <div className="flex justify-between gap-3"><div><h1 className="text-2xl font-semibold">Amazon orders</h1><p className="text-sm text-neutral-400">What you bought, and the payments behind it.</p></div><Button variant="outline" onClick={() => setVersion(v => v + 1)}>Refresh</Button></div>
     {error && <p role="alert" className="text-red-300">{error}</p>}
@@ -62,13 +67,34 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
       <select aria-label="Matching status" className={field} value={query.get("status") ?? ""} onChange={e => change("status", e.target.value)}><option value="">All statuses</option>{["unmatched", "partially-matched", "matched", "needs-review"].map(s => <option key={s} value={s}>{s.replaceAll("-", " ")}</option>)}</select>
     </div>
     {!list.total && <p className="rounded-xl border border-neutral-800 p-6 text-neutral-400">No orders found. Supply order-details PDFs through the agent-assisted import workflow.</p>}
-    <div className="grid grid-cols-1 gap-2">{list.orders.map(o => <button key={o.id} className={`min-w-0 w-full rounded-xl border p-4 text-left ${String(o.id) === selected ? "border-sky-500" : "border-neutral-800"}`} onClick={() => change("order", String(o.id), true)}>
+    <div className="grid grid-cols-1 gap-2">{list.orders.map(o => <button key={o.id} aria-haspopup="dialog" className={`min-w-0 w-full rounded-xl border p-4 text-left ${String(o.id) === selected ? "border-sky-500" : "border-neutral-800"}`} onClick={event => { opener.current = event.currentTarget; change("order", String(o.id), true); }}>
       <span className="flex flex-wrap justify-between gap-2"><strong>{o.data.orderId}</strong><span>{o.data.totalMinor === undefined ? "Total unknown" : formatMoney(o.data.totalMinor, o.data.currencyCode)}</span></span>
       <span className="block text-sm text-neutral-400">{o.data.orderDate} · {o.status.replaceAll("-", " ")}{o.data.cardMinor === 0 ? " · No card payment expected" : ""}</span>
       <span className="mt-1 block break-words text-sm text-neutral-300">{o.data.items?.map(i => i.description).join(" · ")}</span>
     </button>)}</div>
     {list.total > 30 && <div className="flex items-center gap-3"><Button variant="outline" disabled={!offset} onClick={() => change("offset", String(Math.max(0, offset - 30)))}>Previous</Button><span>{offset + 1}–{Math.min(offset + 30, list.total)} of {list.total}</span><Button variant="outline" disabled={offset + 30 >= list.total} onClick={() => change("offset", String(offset + 30))}>Next</Button></div>}
-    {detail && <OrderDetail key={`${detail.id}-${version}`} order={detail} accounts={accounts} busy={busy} action={action} />}
+    <Dialog.Root open={!!selected} onOpenChange={open => { if (!open) change("order", "", true); }}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60" />
+        <Dialog.Content aria-describedby={undefined} onCloseAutoFocus={event => { event.preventDefault(); opener.current?.focus({ preventScroll: true }); }} className="fixed inset-y-0 right-0 z-50 flex w-full flex-col border-l border-neutral-700 bg-neutral-950 text-neutral-100 shadow-2xl sm:max-w-3xl">
+          <div className="shrink-0 space-y-3 border-b border-neutral-800 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <Dialog.Title className="text-lg font-semibold">Order details</Dialog.Title>
+              <Dialog.Close asChild><Button variant="outline">Back to orders</Button></Dialog.Close>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button variant="outline" disabled={busy || selectedIndex <= 0} onClick={() => change("order", String(list.orders[selectedIndex - 1]!.id), true)}>Previous order</Button>
+              <Button variant="outline" disabled={busy || selectedIndex < 0 || selectedIndex >= list.orders.length - 1} onClick={() => change("order", String(list.orders[selectedIndex + 1]!.id), true)}>Next order</Button>
+              {selectedIndex >= 0 && <span className="text-xs text-neutral-400">{offset + selectedIndex + 1} of {list.total}</span>}
+            </div>
+          </div>
+          <div ref={panelBody} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5">
+            {error && <p role="alert" className="mb-3 text-red-300">{error}</p>}
+            {detail && String(detail.id) === selected ? <OrderDetail key={`${detail.id}-${version}`} order={detail} accounts={accounts} busy={busy} action={action} /> : !error && <p role="status" className="text-neutral-400">Loading order…</p>}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   </section>;
 }
 

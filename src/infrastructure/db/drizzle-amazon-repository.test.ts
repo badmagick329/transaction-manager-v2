@@ -206,3 +206,20 @@ test("reviewed money is revision checked, audited, repeatable and leaves bank ca
   await ingest(sampleFile([sampleOrder({cardMinor:undefined,giftCardMinor:undefined,incomplete:true})]),"repeated-export");
   expect(queryAmazonOrder(repository,initial.id).spendingMinor).toBe(2220);
 });
+
+
+test("transaction previews batch confirmed purchases and omit source history", async () => {
+  const { repository, ingest, bank } = setup();
+  const payment = bank(-2619), other = bank(-2619);
+  await ingest();
+  const orderId = repository.snapshot().orders[0]!.id;
+  repository.reviewLink({orderId,transactionId:payment.id,kind:"purchase",amountMinor:2619,allocations:[],status:"confirmed"});
+  repository.reviewLink({orderId,transactionId:other.id,kind:"purchase",amountMinor:2619,allocations:[],status:"rejected"});
+  const route=createAmazonRoutes(repository)["/api/amazon-orders/previews"].GET;
+  const response=await route(new Request(`http://localhost/api/amazon-orders/previews?ids=${payment.id},${other.id}`));
+  const data=await response.json();
+  expect(data[payment.id][0].order.data.items).toHaveLength(2);
+  expect(data[other.id]).toEqual([]);
+  expect(JSON.stringify(data)).not.toContain("Purchased items only:");
+  expect((await route(new Request("http://localhost/api/amazon-orders/previews?ids=-1"))).status).toBe(400);
+});

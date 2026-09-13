@@ -630,7 +630,7 @@ export function App() {
     transactionFilters.hideTrading212InterestCashbackAndDividends && "Trading 212 rewards hidden",
     transactionCompleteDataOnly && "Verified data only",
   ].filter(Boolean);
-  const transactionDetails = (transaction: Transaction) => <><AmazonTransactionDetails transactionId={transaction.id} count={transaction.amazonOrderCount} />{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}{transaction.recurringPayment ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setRecurringSeed(null); setSelectedRecurringId(transaction.recurringPayment!.id); setPage("recurring"); }}>Tracked: {transaction.recurringPayment.name}</button> : transaction.economicType === "expense" && !transaction.isExcludedFromCashFlow ? <button className="mt-2 text-xs text-sky-400 hover:underline" onClick={() => { setSelectedRecurringId(null); setRecurringSeed(transaction.id); setPage("recurring"); }}>Track as recurring payment</button> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></>;
+  const transactionDetails = (transaction: Transaction) => <>{transaction.reconciliationLabel ? <p className="mt-1 text-xs text-amber-300">{transaction.reconciliationLabel}</p> : null}{transaction.isExcludedFromCashFlow ? <p className="mt-1 text-xs text-neutral-500">Excluded from cash flow</p> : null}{transaction.recurringPayment ? <button className="mt-3 rounded border border-neutral-700 px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-800" onClick={() => { setRecurringSeed(null); setSelectedRecurringId(transaction.recurringPayment!.id); setPage("recurring"); }}>Tracked: {transaction.recurringPayment.name}</button> : transaction.economicType === "expense" && !transaction.isExcludedFromCashFlow ? <button className="mt-3 rounded border border-neutral-700 px-3 py-2 text-xs text-neutral-300 hover:bg-neutral-800" onClick={() => { setSelectedRecurringId(null); setRecurringSeed(transaction.id); setPage("recurring"); }}>Track as recurring payment</button> : null}<TagPicker transaction={transaction} tags={tags} savingKey={savingKey} setManualTag={setManualTag} createAndAssignTag={createAndAssignTag} createRule={createRuleFromTransaction} /></>;
   const advancedFilterCount = activeFilterLabels.length;
   return (
     <main className="min-h-screen bg-neutral-950 text-neutral-100 min-[1200px]:pl-56">
@@ -978,8 +978,8 @@ export function App() {
 
           {transactions.length > 0 ? (
             <div className="mt-5">
-              <div className="divide-y divide-neutral-800 border-y border-neutral-800 min-[1200px]:hidden" aria-label="Transaction list">
-                {transactions.map(transaction => <details key={transaction.id} className="group py-1">
+              <div className="divide-y divide-neutral-800 border-y border-neutral-800" aria-label="Transaction list">
+                {transactions.map(transaction => <article key={transaction.id} className="py-1"><details className="group">
                   <summary className="cursor-pointer list-none px-1 py-3 focus-visible:outline focus-visible:outline-emerald-400 [&::-webkit-details-marker]:hidden">
                     <span className="flex items-start justify-between gap-3">
                       <span className="min-w-0 break-words text-sm font-medium">{transaction.description}</span>
@@ -993,37 +993,7 @@ export function App() {
                     {transactionDetails(transaction)}
                     <Button variant="outline" size="sm" className="mt-3" disabled={savingKey === `cash-flow-${transaction.id}`} onClick={() => void setCashFlowExcluded(transaction, !transaction.isExcludedFromCashFlow)}>{transaction.isExcludedFromCashFlow ? "Include in cash flow" : "Exclude from cash flow"}</Button>
                   </div>
-                </details>)}
-              </div>
-              <div className="relative hidden overflow-x-auto rounded-2xl border border-neutral-800 min-[1200px]:block">
-                <table className="w-full min-w-[760px] text-left text-sm">
-                <thead className="bg-neutral-900 text-xs uppercase tracking-wide text-neutral-500">
-                  <tr>
-                    <th className="px-4 py-3 font-medium">Date</th>
-                    <th className="px-4 py-3 font-medium">Description</th>
-                    <th className="px-4 py-3 font-medium">Account</th>
-                    <th className="px-4 py-3 font-medium">Type</th>
-                    <th className="px-4 py-3 font-medium">Economic</th>
-                    <th className="px-4 py-3 text-right font-medium">Amount</th>
-                    <th className="w-10 px-2 py-3"><span className="sr-only">Actions</span></th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-neutral-800">
-                  {transactions.map(transaction => (
-                    <tr key={transaction.id} className="group bg-neutral-950/30">
-                      <td className="whitespace-nowrap px-4 py-3 text-neutral-400">{formatTransactionDate(transaction.transactionDate)}</td>
-                      <td className="px-4 py-3 text-neutral-100"><p>{transaction.description}</p>{transactionDetails(transaction)}</td>
-                      <td className="px-4 py-3 text-neutral-400">{transaction.accountName}</td>
-                      <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.transactionType)}</td>
-                      <td className="px-4 py-3 text-neutral-400">{titleCase(transaction.economicType)}</td>
-                      <td className={`whitespace-nowrap px-4 py-3 text-right font-medium ${transaction.amountMinor < 0 ? "text-red-300" : "text-emerald-300"}`}>
-                        {formatMoney(transaction.amountMinor, transaction.currencyCode)}
-                      </td>
-                      <td className="px-2 py-3 text-right"><button className="rounded px-2 py-1 text-xs text-neutral-500 opacity-0 transition hover:bg-neutral-800 hover:text-neutral-200 focus:opacity-100 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-40" disabled={savingKey === `cash-flow-${transaction.id}`} onClick={() => void setCashFlowExcluded(transaction, !transaction.isExcludedFromCashFlow)}>{transaction.isExcludedFromCashFlow ? "Include" : "Exclude"}</button></td>
-                    </tr>
-                  ))}
-                </tbody>
-                </table>
+                </details><AmazonTransactionDetails transactionId={transaction.id} count={transaction.amazonOrderCount} /></article>)}
               </div>
               {hasMoreTransactions ? (
                 <button

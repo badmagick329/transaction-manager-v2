@@ -26,6 +26,12 @@ export function createAmazonRoutes(repository: AmazonRepository) {
       const rows = repository.snapshot().transactions.filter(t => `${t.id} ${t.description} ${t.accountName} ${t.transactionDate} ${(t.amountMinor / 100).toFixed(2)}`.toLowerCase().includes(input.q.toLowerCase())).sort((a, b) => b.transactionDate.localeCompare(a.transactionDate));
       return { total: rows.length, transactions: rows.slice(input.offset, input.offset + 30) };
     }) },
+    "/api/amazon-orders/previews": { GET: handler(request => {
+      const ids = z.array(id).min(1).max(100).parse((new URL(request.url).searchParams.get("ids") ?? "").split(","));
+      const snapshot = repository.snapshot();
+      const orders = new Map(snapshot.orders.map(o => [o.id, o]));
+      return Object.fromEntries(ids.map(transactionId => [transactionId, snapshot.links.filter(l => l.transactionId === transactionId && l.status === "confirmed").map(link => ({ link, order: orders.get(link.orderId)! }))]));
+    }) },
     "/api/amazon-orders/transaction": { GET: handler(request => {
       const transactionId = id.parse(new URL(request.url).searchParams.get("id"));
       const snapshot = repository.snapshot();

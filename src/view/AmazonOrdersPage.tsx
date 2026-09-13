@@ -45,14 +45,14 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
     let active = true; const filters = new URLSearchParams(search); filters.delete("order");
     setError("");
     amazonRequest<AmazonOrderList>(`?${filters}`).then(v => { if (active) setList(v); }).catch(e => { if (active) setError(e.message); });
-    setDetail(null);
+    if (!selected) setDetail(null);
     if (selected) amazonRequest<AmazonOrderDetail>(`/detail?id=${selected}`).then(v => { if (active) setDetail(v); }).catch(e => { if (active) setError(e.message); });
     return () => { active = false; };
   }, [search, version]);
   async function action(path: string, body: unknown) {
     setBusy(true); setError("");
-    try { await amazonRequest(path, body); setVersion(v => v + 1); }
-    catch (e) { setError((e as Error).message); }
+    try { await amazonRequest(path, body); setVersion(v => v + 1); return undefined; }
+    catch (e) { const message = (e as Error).message; setError(message); return message; }
     finally { setBusy(false); }
   }
   const offset = Number(query.get("offset") ?? 0);
@@ -92,7 +92,7 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
           </div>
           <div ref={panelBody} className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-3 sm:p-5">
             {error && <p role="alert" className="mb-3 text-red-300">{error}</p>}
-            {detail && String(detail.id) === selected ? <OrderDetail key={`${detail.id}-${version}`} order={detail} accounts={accounts} busy={busy} action={action} /> : !error && <p role="status" className="text-neutral-400">Loading order…</p>}
+            {detail && String(detail.id) === selected ? <OrderDetail key={detail.id} order={detail} accounts={accounts} busy={busy} action={action} /> : !error && <p role="status" className="text-neutral-400">Loading order…</p>}
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -100,10 +100,10 @@ export function AmazonOrdersPage({ accounts }: { accounts: Account[] }) {
   </section>;
 }
 
-function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDetail; accounts: Account[]; busy: boolean; action: (path: string, body: unknown) => Promise<void> }) {
+function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDetail; accounts: Account[]; busy: boolean; action: (path: string, body: unknown) => Promise<string | undefined> }) {
   const data = order.data;
   const paymentStatus = order.remainingMinor === undefined ? "amount unknown" : order.remainingMinor === 0 ? "matched" : order.remainingMinor === data.cardMinor ? "unmatched" : "partially matched";
-  const money = (v: number | undefined) => v === undefined ? "Unknown" : formatMoney(v, data.currencyCode);
+  const money = (v: number | undefined) => v === undefined ? "Not recorded" : formatMoney(v, data.currencyCode);
   const [accountId, setAccountId] = useState(String(order.mapping?.accountId ?? ""));
   const [manualQuery, setManualQuery] = useState("");
   const [results, setResults] = useState<BankRow[]>([]);
@@ -123,35 +123,40 @@ function OrderDetail({ order, accounts, busy, action }: { order: AmazonOrderDeta
     try {
       if (!selected) throw new Error("Select a transaction");
       const input = { orderId: order.id, transactionId: selected.id, kind, amountMinor: amountInput(amount), allocations: Object.entries(allocations).filter(([, v]) => v).map(([itemId, v]) => ({ itemId, amountMinor: amountInput(v) })), status: "confirmed" as const };
-      await action("/link", input);
+      const failure = await action("/link", input);
+      if (failure) throw new Error(failure);
+      setSelected(null); setError("");
     } catch (e) { setError((e as Error).message); }
   }
   return <article className="min-w-0 break-words space-y-5 rounded-xl border border-neutral-700 p-4 sm:p-6">
     <h2 className="text-xl font-semibold">Order {data.orderId}</h2>
     <p className="text-sm text-neutral-400">{data.marketplace} · {data.orderDate} · Payment: {paymentStatus}</p>
-    {data.incomplete && <p className="text-sm text-amber-300">Order details incomplete: some funding or adjustment details are unverified. Confirming a payment does not fill in missing order evidence.</p>}
+    {data.incomplete && <p className="text-sm text-amber-300">Some order details are missing. Check how you paid below; any missing delivery or discount details still need an updated order document.</p>}
     <ul className="divide-y divide-neutral-800">{data.items?.map(i => <li key={i.id} className="flex justify-between gap-4 py-3"><span>{i.description}{i.quantity !== undefined && <span className="text-neutral-400"> · Quantity {i.quantity}</span>}{i.shipment && <small className="block text-neutral-400">Shipment: {i.shipment}</small>}{i.returned && <small className="block text-amber-300">Returned</small>}</span><span className="whitespace-nowrap">{money(i.amountMinor)}</span></li>)}</ul>
-    <dl className="grid grid-cols-2 gap-2 text-sm">{([
-      [data.subtotalExcludesVat ? "Subtotal (excluding VAT)" : "Subtotal", data.subtotalMinor], ["VAT (already included in item prices)", data.vatMinor], ["Delivery", data.deliveryMinor], ...(data.giftWrapMinor !== undefined ? [["Gift wrap", data.giftWrapMinor]] : []), ["Discount", data.discountMinor], ["Order value", data.totalMinor], ["Amazon balance used", data.giftCardMinor], ["Expected card amount", data.cardMinor], ["Unmatched card amount", order.remainingMinor], ["Issued refunds", data.refundMinor], ["Known refunds to Amazon balance", order.balanceRefundMinor], ["Purchase spending after recorded refunds", order.spendingMinor],
-    ] as Array<[string, number | undefined]>).map(([label, value]) => <div key={label} className="contents"><dt className="text-neutral-400">{label}</dt><dd>{money(value)}</dd></div>)}</dl>
+    <dl className="grid grid-cols-2 gap-2 rounded bg-neutral-900 p-3 text-sm">{([
+      ["Order total", data.totalMinor], ["Paid from Amazon balance", data.giftCardMinor], ["Paid by card", data.cardMinor], ["Refunds for this order", data.refundMinor], ["Order cost after refunds", order.spendingMinor],
+    ] as Array<[string, number | undefined]>).map(([label, value]) => <div key={label} className="contents"><dt className="text-neutral-400">{label}</dt><dd className="text-right font-medium">{money(value)}</dd></div>)}</dl>
+    <details className="text-sm"><summary className="cursor-pointer text-neutral-400">Delivery, discounts and VAT</summary><dl className="mt-3 grid grid-cols-2 gap-2">{([
+      [data.subtotalExcludesVat ? "Subtotal before VAT" : "Subtotal", data.subtotalMinor], ["VAT (included in item prices)", data.vatMinor], ["Delivery", data.deliveryMinor], ["Gift wrap", data.giftWrapMinor], ["Discount", data.discountMinor],
+    ] as Array<[string, number | undefined]>).map(([label, value]) => <div key={label} className="contents"><dt className="text-neutral-400">{label}</dt><dd className="text-right">{money(value)}</dd></div>)}</dl></details>
     {data.cardMinor === 0 && <p className="text-emerald-300">No card payment expected</p>}
-    <p className="text-sm text-neutral-400">Purchase spending includes all funding and subtracts issued refunds. Bank cash flow is separate. No recorded refund does not prove that no refund exists.</p>
-    <MoneyReview key={order.revisionId} order={order} busy={busy} action={action} />
-    {!!order.refundRemainingMinor && <p className="text-amber-300">Refund not linked to a bank receipt (destination may be unknown): {money(order.refundRemainingMinor)}</p>}
+    <p className="text-sm text-neutral-400">Your net purchase cost is the order total minus refunds recorded for this order. This does not change your bank transactions.</p>
+    <MoneyReview order={order} busy={busy} action={action} />
+    {!!order.refundRemainingMinor && <p className="text-amber-300">Refund still to check against bank transactions: {money(order.refundRemainingMinor)}</p>}
     {data.payments?.map(p => <p key={p.id} className="text-sm">{p.kind}: {money(p.amountMinor)} · {p.date ?? "Date unknown"} · {p.destination === "ElectronicGiftCertificate" ? "Amazon balance" : p.destination ?? "Destination unknown"}</p>)}
-    {data.card && <div className="flex flex-wrap items-center gap-2"><span>{data.card.brand} ••••{data.card.lastFour}</span><select aria-label="Map Amazon card to account" className={field} value={accountId} onChange={e => setAccountId(e.target.value)}><option value="">Choose account</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name} ({a.currencyCode})</option>)}</select><Button disabled={busy || !accountId} onClick={() => action("/mapping", { ...data.card, accountId: Number(accountId) })}>Confirm account mapping</Button></div>}
-    <h3 className="font-semibold">Suggested payments</h3>
-    {!order.candidates.length && <p className="text-sm text-neutral-400">No exact candidates. Use manual search below for split payments or refunds.</p>}
-    {order.candidates.map(c => <div key={c.transaction.id} className="space-y-2 rounded border border-neutral-800 p-3"><p>{c.transaction.transactionDate.slice(0, 10)} · {c.transaction.accountName} · {money(c.amountMinor)}</p><p className="text-sm text-neutral-400">{c.unique ? "Unique candidate" : "Ambiguous candidate"} · {c.reason}</p><div className="flex gap-2"><Button disabled={busy} onClick={() => review({ orderId: order.id, transactionId: c.transaction.id, amountMinor: c.amountMinor, kind: "purchase", allocations: [], status: "confirmed" }, "confirmed")}>Confirm</Button><Button variant="outline" disabled={busy} onClick={() => review({ orderId: order.id, transactionId: c.transaction.id, amountMinor: c.amountMinor, kind: "purchase", allocations: [], status: "rejected" }, "rejected")}>Reject</Button></div></div>)}
-    <h3 className="font-semibold">Payment links</h3>
+    {data.card && <details className="rounded border border-neutral-800 p-3 text-sm"><summary className="cursor-pointer">Which bank account is this card? (optional)</summary><p className="my-2 text-neutral-400">Save this once to help suggest the right bank transactions for future orders.</p><div className="flex flex-wrap items-center gap-2"><span>{data.card.brand} ••••{data.card.lastFour}</span><select aria-label="Map Amazon card to account" className={field} value={accountId} onChange={e => setAccountId(e.target.value)}><option value="">Choose account</option>{accounts.map(a => <option key={a.id} value={a.id}>{a.name} ({a.currencyCode})</option>)}</select><Button disabled={busy || !accountId} onClick={() => action("/mapping", { ...data.card, accountId: Number(accountId) })}>Save card account</Button></div></details>}
+    <h3 className="border-t border-neutral-800 pt-5 font-semibold">Match to bank transactions</h3>
+    {!order.candidates.length && order.remainingMinor !== 0 && <p className="text-sm text-neutral-400">No suggested bank payment. You can search your transactions below.</p>}
+    {order.candidates.map(c => <div key={c.transaction.id} className="space-y-2 rounded border border-neutral-800 p-3"><p>{c.transaction.transactionDate.slice(0, 10)} · {c.transaction.accountName} · {money(c.amountMinor)}</p><p className="text-sm text-neutral-400">{c.unique ? "Suggested match" : "Possible match"} · {c.reason}</p><div className="flex gap-2"><Button disabled={busy} onClick={() => review({ orderId: order.id, transactionId: c.transaction.id, amountMinor: c.amountMinor, kind: "purchase", allocations: [], status: "confirmed" }, "confirmed")}>Confirm</Button><Button variant="outline" disabled={busy} onClick={() => review({ orderId: order.id, transactionId: c.transaction.id, amountMinor: c.amountMinor, kind: "purchase", allocations: [], status: "rejected" }, "rejected")}>Reject</Button></div></div>)}
+    {order.links.length > 0 && <h3 className="font-semibold">Linked transactions</h3>}
     {order.links.map(l => <div key={l.id} className="space-y-2 rounded border border-neutral-800 p-3"><p>{l.transaction.transactionDate.slice(0, 10)} · {l.transaction.accountName} · {l.kind} · {money(l.amountMinor)} · {l.status.replaceAll("_", " ")}</p><p className="text-sm text-neutral-400">{l.breakdown.wholeOrder ? "Full order contents; funding is not allocated across items" : l.breakdown.unresolvedMinor ? `Item allocation unresolved: ${money(l.breakdown.unresolvedMinor)}` : "Item allocation complete"}</p>{l.breakdown.items.map(i => <p key={i.id} className="text-sm">{i.description} · {money(i.amountMinor)}</p>)}<div className="flex flex-wrap gap-2"><Button variant="outline" disabled={busy} onClick={() => { select(l.transaction); setAmount((l.amountMinor / 100).toFixed(2)); setKind(l.kind); setAllocations(Object.fromEntries(l.allocations.map(a => [a.itemId, (a.amountMinor / 100).toFixed(2)]))); }}>Review / edit</Button>{l.status !== "unlinked" && <Button variant="outline" disabled={busy} onClick={() => review({ ...l, status: "unlinked" }, "unlinked")}>{l.status === "rejected" ? "Reconsider" : "Unlink"}</Button>}</div></div>)}
     <h3 className="font-semibold">Find a payment or refund</h3>
     <div className="flex gap-2"><input className={`${field} min-w-0 flex-1`} aria-label="Search bank transactions" placeholder="Description, account, date, amount or transaction ID" value={manualQuery} onChange={e => setManualQuery(e.target.value)} /><Button variant="outline" onClick={() => search()}>Search</Button></div>
     <div className="max-h-60 overflow-auto">{results.map(t => <button className="block w-full border-b border-neutral-800 p-2 text-left text-sm hover:bg-neutral-800" key={t.id} onClick={() => select(t)}>#{t.id} · {t.transactionDate.slice(0, 10)} · {t.accountName} · {t.description} · {formatMoney(t.amountMinor, t.currencyCode)}</button>)}</div>
     {resultTotal > 30 && <div className="flex gap-2"><Button variant="outline" disabled={!resultOffset} onClick={() => search(resultOffset - 30)}>Previous results</Button><Button variant="outline" disabled={resultOffset + 30 >= resultTotal} onClick={() => search(resultOffset + 30)}>More results</Button></div>}
     {error && <p role="alert" className="text-red-300">{error}</p>}
-    {selected && <div className="space-y-3 rounded border border-sky-800 p-3"><p>#{selected.id} · {selected.description} · {selected.accountName}</p><label className="block">{kind === "purchase" ? "Purchase" : "Refund"} amount ({data.currencyCode}) <input aria-label="Link amount" className={field} inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label><p className="text-sm text-neutral-400">Optional item allocations. Leave blank when the payment’s item split is unknown.</p>{data.items?.filter(i => kind === "purchase" || i.returned).map(i => <label key={i.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">{i.description}<input aria-label={`Allocation for ${i.description}`} className={`${field} w-28`} inputMode="decimal" value={allocations[i.id] ?? ""} onChange={e => setAllocations(a => ({ ...a, [i.id]: e.target.value }))} /></label>)}<Button disabled={busy} onClick={confirm}>Confirm link and allocations</Button></div>}
-    <details><summary className="cursor-pointer font-semibold">Evidence and review history</summary><div className="space-y-3 pt-3">{order.revisions.map(value => <div key={value.id} className="rounded border border-neutral-800 p-3"><p>Revision {value.id} · {value.status} · {value.source.fileName} · {value.source.capturedAt}</p><RevisionDetails revision={value} current={data} />{value.status === "pending" && <div className="mt-2 flex gap-2"><Button disabled={busy} onClick={() => action("/revision", { revisionId: value.id, accept: true })}>Accept revision</Button><Button variant="outline" disabled={busy} onClick={() => action("/revision", { revisionId: value.id, accept: false })}>Reject revision</Button></div>}</div>)}{order.history.map(h => <details key={h.id}><summary className="text-sm">{h.createdAt} · {h.action}</summary><HistoryDetail event={h} currency={data.currencyCode} /></details>)}</div></details>
+    {selected && <div className="space-y-3 rounded border border-sky-800 p-3"><p>#{selected.id} · {selected.description} · {selected.accountName}</p><label className="block">{kind === "purchase" ? "Purchase" : "Refund"} amount ({data.currencyCode}) <input aria-label="Link amount" className={field} inputMode="decimal" value={amount} onChange={e => setAmount(e.target.value)} /></label><details><summary className="cursor-pointer text-sm">Split this payment across items (optional)</summary><p className="my-2 text-sm text-neutral-400">Leave blank to link the whole order. Only enter amounts paid by this bank transaction.</p>{data.items?.filter(i => kind === "purchase" || i.returned).map(i => <label key={i.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">{i.description}<input aria-label={`Allocation for ${i.description}`} className={`${field} w-28`} inputMode="decimal" value={allocations[i.id] ?? ""} onChange={e => setAllocations(a => ({ ...a, [i.id]: e.target.value }))} /></label>)}</details><Button disabled={busy} onClick={confirm}>Save transaction match</Button></div>}
+    <details><summary className="cursor-pointer font-semibold">Source documents and change history</summary><div className="space-y-3 pt-3">{order.revisions.map(value => <div key={value.id} className="rounded border border-neutral-800 p-3"><p>Revision {value.id} · {value.status} · {value.source.fileName} · {value.source.capturedAt}</p><RevisionDetails revision={value} current={data} />{value.status === "pending" && <div className="mt-2 flex gap-2"><Button disabled={busy} onClick={() => action("/revision", { revisionId: value.id, accept: true })}>Accept revision</Button><Button variant="outline" disabled={busy} onClick={() => action("/revision", { revisionId: value.id, accept: false })}>Reject revision</Button></div>}</div>)}{order.history.map(h => <details key={h.id}><summary className="text-sm">{h.createdAt} · {h.action}</summary><HistoryDetail event={h} currency={data.currencyCode} /></details>)}</div></details>
   </article>;
 }
 
@@ -175,31 +180,55 @@ function HistoryDetail({ event, currency }: { event: AmazonEvidence["history"][n
   return <p className="py-2 text-sm text-neutral-400">Revision {change.revisionId}</p>;
 }
 
-function MoneyReview({ order, busy, action }: { order: AmazonOrderDetail; busy: boolean; action: (path: string, body: unknown) => Promise<void> }) {
+export function MoneyReview({ order, busy, action }: { order: AmazonOrderDetail; busy: boolean; action: (path: string, body: unknown) => Promise<string | undefined> }) {
   const [balance, setBalance] = useState(order.data.giftCardMinor === undefined ? "" : (order.data.giftCardMinor / 100).toFixed(2));
   const [refund, setRefund] = useState(order.data.refundMinor === undefined ? "" : (order.data.refundMinor / 100).toFixed(2));
   const [refundBalance, setRefundBalance] = useState(order.data.refundBalanceMinor !== undefined || order.balanceRefundMinor > 0 ? (order.balanceRefundMinor / 100).toFixed(2) : "");
-  const [evidence, setEvidence] = useState("");
-  const [error, setError] = useState("");
-  async function save(kind: "funding" | "refunds") {
-    try {
-      if (!evidence.trim()) throw new Error("Describe the Amazon order page or refund confirmation you checked");
-      await action("/money", { orderId: order.id, revisionId: order.revisionId, evidence,
-        ...(kind === "funding" ? { funding: { balanceMinor: amountInput(balance) } } : { refunds: { totalMinor: amountInput(refund), ...(refundBalance ? { balanceMinor: amountInput(refundBalance) } : {}) } }) });
-      setError("");
-    } catch (e) { setError((e as Error).message); }
-  }
+  const [notes, setNotes] = useState({ funding: "", refunds: "" });
+  const [messages, setMessages] = useState<Record<string, { error: boolean; text: string }>>({});
+  const clear = (kind: string) => setMessages(current => ({ ...current, [kind]: { error: false, text: "" } }));
+  const money = (value: number) => formatMoney(value, order.data.currencyCode);
   const balanceValue = /^\d+(\.\d{1,2})?$/.test(balance) ? Math.round(Number(balance) * 100) : undefined;
-  return <details className="rounded border border-neutral-700 p-3"><summary className="cursor-pointer font-semibold">Review funding or issued refunds</summary><div className="space-y-3 pt-3">
-    <p className="text-sm text-neutral-400">Amazon balance includes gift cards and earlier refunds. Enter amounts shown by Amazon; do not infer funding from a bank charge.</p>
-    <label className="block text-sm">Evidence checked<textarea className={`${field} block w-full`} value={evidence} onChange={e => setEvidence(e.target.value)} placeholder="For example: order summary shows £20.22 gift card and £601.75 card" /></label>
-    <label className="block text-sm">Amazon balance used ({order.data.currencyCode})<input className={`${field} block`} inputMode="decimal" value={balance} onChange={e => setBalance(e.target.value)} /></label>
-    {balanceValue !== undefined && order.data.totalMinor !== undefined && <p className="text-sm">Expected bank payment: {formatMoney(order.data.totalMinor - balanceValue, order.data.currencyCode)}</p>}
-    <Button disabled={busy || order.data.totalMinor === undefined} onClick={() => save("funding")}>Save reviewed funding</Button>
-    <p className="text-sm text-neutral-400">Refund amounts below are cumulative for this order. Include only issued refunds, not pending return requests. Leave the total blank when unknown.</p>
-    <label className="block text-sm">Total issued refunds ({order.data.currencyCode})<input className={`${field} block`} inputMode="decimal" value={refund} onChange={e => setRefund(e.target.value)} /></label>
-    <label className="block text-sm">Of that, refunded to Amazon balance - leave blank if unknown ({order.data.currencyCode})<input className={`${field} block`} inputMode="decimal" value={refundBalance} onChange={e => setRefundBalance(e.target.value)} /></label>
-    <Button disabled={busy || !refund} onClick={() => save("refunds")}>Save issued refund totals</Button>
-    {error && <p role="alert" className="text-red-300">{error}</p>}
-  </div></details>;
+  const cardValue = balanceValue !== undefined && order.data.totalMinor !== undefined ? order.data.totalMinor - balanceValue : undefined;
+  async function save(kind: "funding" | "refunds") {
+    clear(kind);
+    try {
+      if (!notes[kind].trim()) throw new Error("Add an Amazon page link or a short note in the source field below.");
+      const values = kind === "funding" ? { funding: { balanceMinor: amountInput(balance) } } : { refunds: { totalMinor: amountInput(refund), ...(refundBalance ? { balanceMinor: amountInput(refundBalance) } : {}) } };
+      if (kind === "funding" && cardValue !== undefined && cardValue < 0) throw new Error("The amount paid from Amazon balance cannot exceed the order total.");
+      if (kind === "refunds" && amountInput(refund) > (order.data.totalMinor ?? Infinity)) throw new Error("The refund total cannot exceed the order total.");
+      if (kind === "refunds" && refundBalance && amountInput(refundBalance) > amountInput(refund)) throw new Error("The amount returned to Amazon balance cannot exceed the total refund.");
+      const failure = await action("/money", { orderId: order.id, revisionId: order.revisionId, evidence: notes[kind].trim(), ...values });
+      if (failure) throw new Error(failure);
+      setMessages(current => ({ ...current, [kind]: { error: false, text: kind === "funding" ? "Payment details saved. You can now match the card payment below." : "Refund details saved. The order cost has been updated." } }));
+    } catch (e) { setMessages(current => ({ ...current, [kind]: { error: true, text: (e as Error).message } })); }
+  }
+  function source(kind: "funding" | "refunds") {
+    return <label className="block space-y-1 text-sm"><span>Amazon page link or note <span className="text-neutral-400">(required)</span></span><textarea className={`${field} block w-full`} rows={2} value={notes[kind]} onChange={e => { setNotes(n => ({ ...n, [kind]: e.target.value })); clear(kind); }} placeholder={kind === "funding" ? "Paste the order page link, or describe the payment amounts shown by Amazon" : "Paste the refund confirmation link, or describe the refund Amazon has sent"} /></label>;
+  }
+  function message(kind: string) {
+    const value = messages[kind];
+    return value?.text && <p role={value.error ? "alert" : "status"} className={`text-sm ${value.error ? "text-red-300" : "text-emerald-300"}`}>{value.text}</p>;
+  }
+  return <div className="space-y-4">
+    <section className="space-y-4 rounded-lg border border-neutral-700 p-4" aria-labelledby="amazon-payment-heading">
+      <div><h3 id="amazon-payment-heading" className="font-semibold">How you paid</h3><p className="mt-1 text-sm text-neutral-400">Record the balance used when you placed this order. Amazon calls this the “Gift Card Amount”, even if the credit came from an earlier refund.</p></div>
+      <div className="rounded bg-neutral-900 p-3 text-sm">Order total: <strong>{order.data.totalMinor === undefined ? "Unknown" : money(order.data.totalMinor)}</strong></div>
+      <label className="block space-y-1 text-sm"><span>Paid from Amazon balance ({order.data.currencyCode})</span><input className={`${field} block w-full sm:max-w-64`} inputMode="decimal" value={balance} onChange={e => { setBalance(e.target.value); clear("funding"); }} /><span className="block text-neutral-400">Use the Gift Card Amount shown on this order. Enter 0 if you paid entirely by card.</span></label>
+      {cardValue !== undefined && cardValue >= 0 && <p className="text-sm">Remaining amount paid by card: <strong>{money(cardValue)}</strong></p>}
+      {source("funding")}
+      {message("funding")}
+      <Button disabled={busy || !balance || order.data.totalMinor === undefined} onClick={() => save("funding")}>Save payment details</Button>
+    </section>
+    <details className="rounded-lg border border-neutral-700 p-4">
+      <summary className="cursor-pointer font-semibold">Refunds for this order</summary>
+      <div className="mt-4 space-y-4"><p className="text-sm text-neutral-400">Only fill this in if Amazon has sent money back for this purchase. Credit from an earlier order belongs in “How you paid” above.</p>
+        <label className="block space-y-1 text-sm"><span>Total refunded for this order ({order.data.currencyCode})</span><input className={`${field} block w-full sm:max-w-64`} inputMode="decimal" value={refund} onChange={e => { setRefund(e.target.value); clear("refunds"); }} /><span className="block text-neutral-400">Add together all refunds already sent for this order, including any saved here before. Do not include a return still awaiting a refund.</span></label>
+        <label className="block space-y-1 text-sm"><span>Amount returned to Amazon balance ({order.data.currencyCode})</span><input className={`${field} block w-full sm:max-w-64`} inputMode="decimal" value={refundBalance} onChange={e => { setRefundBalance(e.target.value); clear("refunds"); }} /><span className="block text-neutral-400">This is part of the total above, not an extra refund. Enter 0 if it all went to your bank, or leave blank if you do not know.</span></label>
+        {source("refunds")}
+        {message("refunds")}
+        <Button disabled={busy || !refund} onClick={() => save("refunds")}>Save refund details</Button>
+      </div>
+    </details>
+  </div>;
 }

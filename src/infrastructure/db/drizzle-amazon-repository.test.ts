@@ -27,6 +27,26 @@ function setup() {
   return { db, root, repository, ingest, bank, account };
 }
 
+test("transaction search finds confirmed Amazon items without duplicating bank totals", async () => {
+  const { db, repository, ingest, bank } = setup();
+  const transaction = bank(-2619);
+  bank(-2619);
+  await ingest(sampleFile([sampleOrder({ items: [
+    { id: "drink", description: "CELSIUS sparkling drink", amountMinor: 2220 },
+    { id: "lanyard", description: "Celsius accessory", amountMinor: 399 },
+  ] })]));
+  const orderId = repository.snapshot().orders[0]!.id;
+  const dashboard = new DrizzleDashboardQueryRepository(db);
+  expect(await dashboard.listTransactions({ description: "celsius" })).toHaveLength(0);
+  repository.reviewLink({ orderId, transactionId: transaction.id, kind: "purchase", amountMinor: 2619, allocations: [], status: "confirmed" });
+  expect((await dashboard.listTransactions({ description: "celsius" })).map(t => t.id)).toEqual([transaction.id]);
+  expect(await dashboard.summarizeTransactions({ description: "celsius" })).toMatchObject([{ transactionCount: 1, expenseMinor: -2619 }]);
+  expect(await dashboard.listTransactions({ description: "celsius", currencyCode: "EUR" })).toHaveLength(0);
+  expect(await dashboard.listTransactions({ description: "Amazon" })).toHaveLength(2);
+  repository.reviewLink({ orderId, transactionId: transaction.id, kind: "purchase", amountMinor: 2619, allocations: [], status: "unlinked" });
+  expect(await dashboard.listTransactions({ description: "celsius" })).toHaveLength(0);
+});
+
 test("skipped matching survives imports, preserves spending and resumes suggestions", async () => {
   const { repository, ingest, bank } = setup();
   const transaction = bank(-2619);

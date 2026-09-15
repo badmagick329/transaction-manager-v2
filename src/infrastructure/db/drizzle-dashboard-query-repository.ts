@@ -16,6 +16,7 @@ import type {
 import { intersectCoverageForActivePeriods, mergeCoverageIntervals } from "../../app/data-coverage";
 import { exclusiveEndDate } from "../../app/date-range";
 import { recurringOverview } from "../../app/recurring-payments";
+import { amazonOrders, amazonRevisions } from "./schema";
 import { DrizzleRecurringPaymentRepository } from "./drizzle-recurring-payment-repository";
 import type { AppDatabase } from "./client";
 import { amazonLinks, accountCoveragePeriods, accounts, cashFlowExclusions, importBatches, rawRecords, sources, tagRules, tags, transactionLinks, transactionManualTags, transactionTagRuleMatches, transactions } from "./schema";
@@ -60,7 +61,14 @@ function transactionFilterConditions(filters?: TransactionFilters): SQL[] {
     filters?.accountId ? eq(transactions.accountId, filters.accountId) : undefined,
     filters?.currencyCode ? eq(transactions.currencyCode, filters.currencyCode) : undefined,
     filters?.transactionType ? eq(transactions.transactionType, filters.transactionType) : undefined,
-    filters?.description ? like(transactions.description, `%${filters.description}%`) : undefined,
+    filters?.description ? or(like(transactions.description, `%${filters.description}%`),
+      sql`exists (select 1 from ${amazonLinks}
+        inner join ${amazonOrders} on ${amazonOrders.id} = ${amazonLinks.orderId}
+        inner join ${amazonRevisions} on ${amazonRevisions.id} = ${amazonOrders.revisionId},
+        json_each(${amazonRevisions.data}, '$.items') item
+        where ${amazonLinks.transactionId} = ${transactions.id} and ${amazonLinks.status} = 'confirmed'
+        and instr(lower(json_extract(item.value, '$.description')), lower(${filters.description})) > 0)`
+    ) : undefined,
     filters?.minAmountMinor !== undefined ? sql`${transactions.amountMinor} >= ${filters.minAmountMinor}` : undefined,
     filters?.maxAmountMinor !== undefined ? sql`${transactions.amountMinor} <= ${filters.maxAmountMinor}` : undefined,
     filters?.startDate ? gte(transactions.transactionDate, filters.startDate) : undefined,

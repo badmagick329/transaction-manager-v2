@@ -449,7 +449,16 @@ export const amazonHistory = sqliteTable("amazon_history", {
   createdAt: text("created_at").notNull().$defaultFn(isoNow),
 });
 
+export const plannedSpending = sqliteTable("planned_spending", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  name: text("name").notNull(), currencyCode: text("currency_code").notNull(),
+  priceMinor: integer("price_minor").notNull(), quantity: integer("quantity").notNull(),
+  interval: integer("interval").notNull(), unit: text("unit", { enum: ["weeks", "months"] }).notNull(),
+  included: integer("included", { mode: "boolean" }).notNull(),
+});
+
 export const schema = {
+  plannedSpending,
   amazonOrders, amazonRevisions, amazonLinks, amazonMappings, amazonHistory,
   recurringReviewReports,
   recurringReviewDecisions,

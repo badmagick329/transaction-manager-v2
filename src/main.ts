@@ -1,3 +1,5 @@
+import { createPlannedSpendingRoutes } from "./infrastructure/http/planned-spending-routes";
+import { DrizzlePlannedSpendingRepository } from "./infrastructure/db/drizzle-planned-spending-repository";
 import { createAmazonRoutes } from "./infrastructure/http/amazon-routes";
 import { DrizzleAmazonRepository } from "./infrastructure/db/drizzle-amazon-repository";
 import { serve } from "bun";
@@ -29,7 +31,7 @@ export async function startApp() {
   const reconciliation = createPayPalPaymentReconciliation(new DrizzlePayPalReconciliationRepository(db));
   const tagging = createTaggingActions(new DrizzleTaggingRepository(db));
   const amazonRepository = new DrizzleAmazonRepository(db);
-  const routes = { ...createAmazonRoutes(amazonRepository), ...createRecurringAgentRoutes(new DrizzleRecurringReviewRepository(db)), ...createRecurringRoutes(new DrizzleRecurringPaymentRepository(db)), ...createHttpRoutes({
+  const routes = { ...createPlannedSpendingRoutes(new DrizzlePlannedSpendingRepository(db)), ...createAmazonRoutes(amazonRepository), ...createRecurringAgentRoutes(new DrizzleRecurringReviewRepository(db)), ...createRecurringRoutes(new DrizzleRecurringPaymentRepository(db)), ...createHttpRoutes({
     queries,
     classifications,
     reconciliation,

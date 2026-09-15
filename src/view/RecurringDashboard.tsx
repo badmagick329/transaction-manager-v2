@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { PlannedSpendingPanel } from "./PlannedSpendingPanel";
+import type { PlannedSpending } from "../app/planned-spending";
 import { ArrowDownRight, ArrowUpRight, CalendarDays, ChevronLeft, ChevronRight, CircleHelp, LockKeyhole, SlidersHorizontal, Wallet } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -18,7 +20,8 @@ export function RecurringDashboard({ data, busy, onControl, onManage, onBilling 
   onControl: (paymentId: number, control: SpendingControl) => Promise<void>;
   onManage: (paymentId: number) => void; onBilling: (payment: DashboardPayment) => void;
 }) {
-  const currencies = [...new Set(data.payments.filter(p => p.status === "active").map(p => p.currencyCode))].sort();
+  const [planned, setPlanned] = useState<PlannedSpending[]>([]);
+  const currencies = [...new Set(["GBP", ...data.payments.filter(p => p.status === "active").map(p => p.currencyCode), ...planned.map(p => p.currencyCode)])].sort();
   const [selectedCurrency, setSelectedCurrency] = useState("");
   const currency = currencies.includes(selectedCurrency) ? selectedCurrency : currencies[0];
   const today = new Date().toISOString().slice(0, 10);
@@ -37,7 +40,6 @@ export function RecurringDashboard({ data, busy, onControl, onManage, onBilling 
   const remainingCandidates = baseline.rows.filter(p => p.control !== "fixed" && targets[p.id] === undefined);
   const removeTarget = (id: number) => setTargets(previous => Object.fromEntries(Object.entries(previous).filter(([key]) => Number(key) !== id)));
 
-  if (!currencies.length) return <div className={panelClass}><h3 className="font-medium">Your recurring picture starts here</h3><p className="mt-2 text-sm text-neutral-400">Add an active recurring payment, or review your suggestions in Manage payments, to see the breakdown.</p></div>;
 
   return <div className="space-y-6">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -51,6 +53,7 @@ export function RecurringDashboard({ data, busy, onControl, onManage, onBilling 
       <div className={panelClass}><SlidersHorizontal size={18} className="mb-4 text-emerald-300" aria-hidden /><p className="text-sm text-neutral-300">Potentially adjustable</p><p className="mt-2 text-2xl font-semibold tabular-nums">{money(budget.byControl.reducible + budget.byControl.cancellable)}<span className="text-sm font-normal text-neutral-500"> /mo</span></p><p className="mt-2 text-xs text-neutral-400">Can reduce or cancel · not all of it is savings</p></div>
     </div>
 
+    <PlannedSpendingPanel currency={currency} recurringMonthly={budget.monthly} items={planned} onChange={setPlanned} />
     {budget.byControl.unclassified > 0 && <p className="flex items-start gap-2 text-sm text-neutral-400"><CircleHelp size={16} className="mt-0.5 shrink-0" aria-hidden /><span>{money(budget.byControl.unclassified)}/month is still unclassified. Choose how much control you have over each payment below.</span></p>}
 
     <section className={panelClass} aria-labelledby="recurring-breakdown-title">
